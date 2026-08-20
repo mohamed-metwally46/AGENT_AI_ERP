@@ -1,9 +1,10 @@
-"""Diagnostics entry point: ``python -m erp_agent``.
+"""Entry point: ``python -m erp_agent``.
 
-Reports what the process resolved. Until the API exists this is what "the
-project runs" means, and it stays useful afterwards as the fastest way to answer
-"is this deployment configured correctly, and is the write barrier intact?"
-without starting a server.
+Two things, and they share one start-up path on purpose. ``--check`` reports
+what the process resolved and proves the write barrier; ``--serve`` does the
+same and then binds a port. Neither can skip the barrier, because both go
+through :func:`~erp_agent.core.bootstrap.start`, and an entry point that
+could start without proving the safety claim is the one that eventually does.
 
 Deliberately prints no secret. Holding the DSN as a ``SecretStr`` is defeated by
 one diagnostics command that renders its password.
@@ -24,7 +25,7 @@ from erp_agent.domain.models.sql import SqlStatement
 
 __all__ = ["main"]
 
-_USAGE = """usage: python -m erp_agent [--check] [--list-settings]
+_USAGE = """usage: python -m erp_agent [--check | --serve] [--list-settings]
 
 Boots the ERP agent and reports the resolved configuration.
 
@@ -32,6 +33,8 @@ options:
   --check           Also connect to PostgreSQL, prove the write barrier by
                     attempting a write of every shape, and run a read. Exits
                     non-zero if the connection is not provably read-only.
+  --serve           Start the HTTP API. Runs full start-up first, so the server
+                    binds only after the write barrier has been proved.
   --list-settings   List every environment variable the system reads and exit.
                     Works even when the current configuration is invalid.
 """
@@ -137,6 +140,10 @@ def main(
     if check:
         arguments.remove("--check")
 
+    serve = "--serve" in arguments
+    if serve:
+        arguments.remove("--serve")
+
     if arguments:
         out.write(f"unrecognised arguments: {' '.join(arguments)}\n\n{_USAGE}")
         return 1
@@ -150,8 +157,46 @@ def main(
 
     _report(settings, checks, out)
 
+    if serve:
+        return _serve(settings, out)
     if check:
         return run_async(_check_database(settings, out))
+    return 0
+
+
+def _serve(settings: Settings, out: TextIO) -> int:
+    """Start the HTTP API, after full start-up.
+
+    Kept here rather than in a separate script so there is exactly one way to
+    start this process. `uvicorn erp_agent...:app` would be a second way, and it
+    would skip the write-barrier proof.
+    """
+    import uvicorn
+
+    from erp_agent.core.container import Container
+    from erp_agent.interfaces.api.app import create_app
+
+    api = settings.api
+    schema = "/openapi.json" if api.docs_enabled else "disabled"
+    out.write(f"  serving            http://{api.host}:{api.port}\n")
+    out.write(f"  openapi            {schema}\n\n")
+
+    # `Server.serve()` on our own runner rather than `uvicorn.run`, which builds
+    # its own loop. The database driver needs a selector loop on Windows
+    # (`core.event_loop`), and a pool created on one loop and used from another
+    # is a pool that fails at the first query.
+    config = uvicorn.Config(
+        create_app(Container(settings)),
+        host=api.host,
+        port=api.port,
+        log_config=None,
+        timeout_keep_alive=int(api.request_timeout_s),
+    )
+    try:
+        run_async(uvicorn.Server(config).serve())
+    except ErpAgentError as exc:
+        out.write(f"  startup            FAILED\n\n  {exc.message}\n\n")
+        return 1
     return 0
 
 

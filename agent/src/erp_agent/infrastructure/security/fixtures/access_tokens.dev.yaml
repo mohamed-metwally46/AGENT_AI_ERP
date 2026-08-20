@@ -1,0 +1,45 @@
+# Dev-mode API credentials for the ERP AI agent.
+#
+# ---------------------------------------------------------------------------
+# THESE ARE NOT SECRETS AND MUST NOT REACH A REAL DEPLOYMENT.
+#
+# They are static, non-expiring, committed to the repository, and readable by
+# anyone who can read this file. They exist so `POST /ask` can be exercised
+# locally against the four dev principals, and for nothing else. The composition
+# root refuses to load this packaged file when APP_ENV=production.
+#
+# Real credentials live in the Platform's `_core.personal_access_tokens`, which
+# is classified CRITICAL / NO_DIRECT_AI_ACCESS (Plan.md section 4) -- the agent
+# is not permitted to read that table. Phase 9 replaces this file with a call to
+# the Platform, not with a query.
+# ---------------------------------------------------------------------------
+#
+# `identity` is what the principal resolver is keyed on. In fixture mode that is
+# the employee id, so these must match `principals.dev.yaml` -- and, like that
+# file, they break when `docker compose down -v` re-seeds the database with new
+# uuids. Regenerate both together.
+
+schema_version: 1
+
+tokens:
+  # EMP-0001 -- CEO. Organisation scope.
+  - token: "dev-token-organisation-0001"
+    identity: "6eb471ef-d1c0-42ec-883c-e558f57b3e3f"
+    label: "dev: CEO, organisation scope"
+
+  # EMP-0002 -- HR director. Branch scope, HR role.
+  - token: "dev-token-branch-hr-0002"
+    identity: "1664d64d-5e12-48d4-b3eb-bf75ec5bc1c5"
+    label: "dev: HR director, branch scope"
+
+  # EMP-0006 -- HR manager with direct reports. Team scope.
+  - token: "dev-token-team-manager-0006"
+    identity: "257997bf-6d5d-4ad0-93ec-6b8ebb6984d9"
+    label: "dev: HR manager, team scope"
+
+  # EMP-0016 -- Sales individual contributor. Self scope: the narrowest rung,
+  # and the one the API security tests use to prove cross-scope reads are
+  # refused by the filter rather than by the model.
+  - token: "dev-token-self-employee-0016"
+    identity: "4a19ff00-cd08-4d02-a6c9-0c0c5706107d"
+    label: "dev: sales employee, self scope"

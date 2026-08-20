@@ -19,10 +19,10 @@ security requirements and the future ERP integration strategy live here.
 
 | | |
 |---|---|
-| **CURRENT PHASE** | Phase 6 — Security Hardening + RAG Metadata Filtering |
-| **CURRENT TASK** | *(none — Phase 6 complete except the S2-blocked permission map; awaiting go-ahead for Phase 7)* |
-| **NEXT TASK** | **Phase 7 — API Layer** |
-| **COMPLETED TASKS** | Phase 0 (0.1–0.3); Phase 1 (1.1); Phase 2 (2.1–2.3); Phase 3; Phase 4; Phase 5; Phase 6 |
+| **CURRENT PHASE** | Phase 7 — API Layer |
+| **CURRENT TASK** | *(none — Phase 7 complete; awaiting go-ahead for Phase 8)* |
+| **NEXT TASK** | **Phase 8 — Evaluation Layer** |
+| **COMPLETED TASKS** | Phase 0 (0.1–0.3); Phase 1 (1.1); Phase 2 (2.1–2.3); Phase 3; Phase 4; Phase 5; Phase 6; Phase 7 |
 
 ### Completed
 
@@ -39,6 +39,7 @@ security requirements and the future ERP integration strategy live here.
 | 4 | RAG Adapter — `KnowledgeBase` port, document catalogue, retrieval-time security filter (gap G3 interim), `search_documents` as the seventh tool; 609 tests | 2026-08-20 |
 | 5 | Hybrid Q&A — grounding policy (run-wide markers, invented markers stripped), multi-source assembly in the loop, prose-vs-records conflict surfacing, §5.4 prompt contract; 693 tests | 2026-08-20 |
 | 6 | Security Hardening — gap G3 closed additively in RAG (6 indexed security fields), per-chunk permission predicate, tagged ingestion path, reproducible re-ingest; permission map blocked on gap S2 | 2026-08-20 |
+| 7 | API Layer — `POST /ask`, bearer authentication, per-principal rate limiting, bounded conversations, sanitised errors, published OpenAPI; RAG wired into the composition root | 2026-08-20 |
 
 ### Phase ledger
 
@@ -51,8 +52,8 @@ security requirements and the future ERP integration strategy live here.
 | 4 | RAG Adapter — Document Q&A | ✅ Complete |
 | 5 | Hybrid Q&A | ✅ Complete |
 | 6 | Security Hardening + RAG Metadata Filtering | ✅ Complete (permission map blocked on S2) |
-| 7 | API Layer | ⬜ Next |
-| 8 | Evaluation Layer | ⬜ |
+| 7 | API Layer | ✅ Complete |
+| 8 | Evaluation Layer | ⬜ Next |
 | 9 | ERP Integration Readiness | ⬜ |
 
 ---
@@ -190,7 +191,7 @@ Verified by reading the source, not assumed:
 | G4 | No security-context concept | The only scoping primitive is `allowed_document_ids: frozenset[str]` |
 | G5 | Only two LLM providers | `config/enums.py` — `LLMProvider` is `{openrouter, gemini}`. §21 requires Ollama |
 | G6 | Tool calling is OpenRouter-only | `LLMClient.respond()` raises by default; the Gemini adapter does not override it |
-| G7 | No API layer | Streamlit process only; no HTTP service |
+| G7 | ~~No API layer~~ **CLOSED in Phase 7** | Was: Streamlit process only. The agent now serves `POST /ask` and `GET /health` with a published OpenAPI schema |
 | G8 | No structured-data capability of any kind | No DB driver, no query layer, no data tools |
 | G9 | No evaluation harness | Correctness tests exist; retrieval/answer quality measurement does not |
 
@@ -1209,12 +1210,11 @@ agree". `max_consecutive_days` is deliberately excluded: "absences longer than
 10 consecutive days need department-head approval" and a cap of 15 are both
 true, and comparing them would manufacture a conflict out of a threshold.
 
-**Carried forward** `Container.tool_registry` still builds the six-tool
-registry: nothing wires the RAG adapter into the composition root, so the
-process-level agent cannot answer a hybrid question even though the loop can.
-Wiring it needs Qdrant configuration, which this plan introduces with the API
-layer; until then hybrid answers are reachable only by constructing the loop
-directly, as the integration suite does.
+**Carried forward — closed in Phase 7.** `Container.tool_registry` built the
+six-tool registry because nothing wired the RAG adapter into the composition
+root. Phase 7 wires it: the container builds seven tools when
+`ERP_KNOWLEDGE_ENABLED` is true and six when it is not, and RAG keeps its own
+configuration rather than having it re-declared.
 
 **Operational note** The embedding model loads lazily inside the first
 retrieval, which can exceed the loop's 15s per-tool ceiling on a cold process.
@@ -1319,7 +1319,48 @@ embedding-model mismatch.
 
 ---
 
-### Phase 7 — API Layer
+### Phase 7 — API Layer ✅ COMPLETE
+
+**Delivered (2026-08-20)** `POST /ask` and `GET /health` on FastAPI, with the
+OpenAPI schema published. `AccessTokenPort` + fixture adapter (constant-time
+comparison, digests not secrets, refused in production); `Authenticate`, the
+application-layer chain credential → identity → principal → `SecurityContext`;
+`ConversationStore` (bounded turns, bounded conversations, keyed by
+`(identity, conversation_id)`); `TokenBucketLimiter` keyed on the principal;
+`AnswerErpQuestion`. The composition root now wires document retrieval, closing
+the gap Phase 5 carried.
+
+**Verified** The scope tests are the substance. Two credentials, the same
+question, different data — and the narrow caller cannot widen by asking, by
+adding a body field, or by naming another caller's conversation. Every
+authentication failure renders identically. An unmapped exception produces a
+bare 500 with no type, no path and no traceback.
+
+**Design decisions worth naming**
+
+*One app factory, start-up in the lifespan.* A connection pool belongs to the
+loop it was created on, so opening one at construction and serving on another
+loop produces a pool that is quietly unusable. `bootstrap.start` was split out
+so the API's lifespan runs exactly the start-up `--check` runs, including the
+write-barrier proof, on the serving loop.
+
+*Conversations are keyed by `(identity, id)`, not by id.* The obvious design —
+key on the id, refuse a mismatch — does prevent cross-reads, but an error that
+fires only for ids that exist is an oracle for which ids exist. Namespacing
+removes the question rather than answering it carefully. Found by a test.
+
+*History holds questions and answers, never tool results.* Section 5.2 forbids
+persisting restricted payloads, and tool results are where the restricted
+material is. The cost is re-running a tool for a follow-up; the alternative is a
+second store of gated data that no predicate guards.
+
+**Not fit for deployment as it stands** The dev token fixture is static,
+non-expiring credentials committed to the repository. The container refuses to
+use the packaged file when `APP_ENV=production`, but that is a guard, not a
+solution: real credentials live in the Platform's `personal_access_tokens`,
+which the agent may not read (Plan.md section 4), so the real adapter is a call
+to the Platform in Phase 9. The rate limiter is likewise in-process: two
+replicas mean twice the limit.
 
 **Goal** An HTTP service so the agent is consumable outside a notebook.
 
@@ -1333,9 +1374,13 @@ from the token, never from the request body; rate limits engage; conversation
 history is bounded; errors never leak internals.
 
 **Acceptance criteria**
-1. `POST /ask` returns answer + citations + the tools used.
-2. A caller cannot influence their own scope through any request field.
-3. OpenAPI schema published; p95 latency within the Section 9.2 budget.
+1. `POST /ask` returns answer + citations + the tools used. — **PASS**
+2. A caller cannot influence their own scope through any request field. — **PASS**:
+   `extra="forbid"` rejects the body outright rather than ignoring the field, and
+   the only input to scope is the `Authorization` header.
+3. OpenAPI schema published; p95 latency within the Section 9.2 budget. — **PARTIAL**:
+   the schema is published and asserted. Latency is **not measured** — it depends
+   on a live model, and Phase 8 is where the harness that can measure it lands.
 
 ---
 

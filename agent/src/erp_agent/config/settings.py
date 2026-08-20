@@ -27,8 +27,10 @@ from erp_agent.config.validation import DsnParts, parse_postgres_dsn
 
 __all__ = [
     "AgentSettings",
+    "ApiSettings",
     "AppSettings",
     "DatabaseSettings",
+    "KnowledgeSettings",
     "LLMSettings",
     "SecuritySettings",
     "Settings",
@@ -170,19 +172,23 @@ class SecuritySettings(_Section):
     principal_fixture_path: Path | None = Field(
         default=None, validation_alias="ERP_PRINCIPAL_FIXTURE_PATH"
     )
+    access_token_fixture_path: Path | None = Field(
+        default=None, validation_alias="ERP_ACCESS_TOKEN_FIXTURE_PATH"
+    )
 
     @model_validator(mode="after")
-    def _configured_fixture_must_exist(self) -> Self:
+    def _configured_fixtures_must_exist(self) -> Self:
         """Reject a configured fixture path that is not a readable file.
 
         Checked here so a typo in the path fails at start-up rather than as a
         failed authorization on the first question somebody asks.
         """
-        path = self.principal_fixture_path
-        if path is not None and not path.is_file():
-            raise ValueError(
-                f"ERP_PRINCIPAL_FIXTURE_PATH points at {path}, which is not a readable file"
-            )
+        for variable, path in (
+            ("ERP_PRINCIPAL_FIXTURE_PATH", self.principal_fixture_path),
+            ("ERP_ACCESS_TOKEN_FIXTURE_PATH", self.access_token_fixture_path),
+        ):
+            if path is not None and not path.is_file():
+                raise ValueError(f"{variable} points at {path}, which is not a readable file")
         return self
 
 
@@ -271,12 +277,101 @@ class AgentSettings(_Section):
         return self.max_result_tokens * 4
 
 
+class KnowledgeSettings(_Section):
+    """Document retrieval.
+
+    Deliberately thin. RAG owns its own configuration -- Qdrant URL, collection,
+    embedding provider and model -- and re-declaring those here would create a
+    second vocabulary for one deployment's settings, which is how two processes
+    end up pointed at different collections while both look correctly
+    configured. RAG reads them from the process environment; this section says
+    only whether to wire retrieval at all and which manifest names the corpus.
+
+    Attributes:
+        enabled: Whether to build the document tool. ``False`` serves structured
+            questions only, which is a coherent deployment when no index exists
+            -- and better than a seventh tool that fails on every call.
+        manifest_path: The document manifest. ``None`` means the packaged dev
+            manifest; the composition root resolves that, because config imports
+            no other layer and cannot know where an infrastructure file lives.
+        module: Functional area stamped at ingestion, recorded here so the
+            deployment that ingests and the deployment that reads agree.
+    """
+
+    enabled: bool = Field(default=True, validation_alias="ERP_KNOWLEDGE_ENABLED")
+    manifest_path: Path | None = Field(default=None, validation_alias="ERP_DOCUMENT_MANIFEST_PATH")
+    module: str | None = Field(default=None, validation_alias="ERP_DOCUMENT_MODULE")
+
+    @model_validator(mode="after")
+    def _configured_manifest_must_exist(self) -> Self:
+        """Reject a configured manifest path that is not a readable file."""
+        path = self.manifest_path
+        if path is not None and not path.is_file():
+            raise ValueError(
+                f"ERP_DOCUMENT_MANIFEST_PATH points at {path}, which is not a readable file"
+            )
+        return self
+
+
+class ApiSettings(_Section):
+    """The HTTP surface (Plan.md section 11, Phase 7).
+
+    Attributes:
+        host: Interface to bind. Loopback by default: a service that binds
+            every interface the moment someone runs it is a service that gets
+            exposed by accident.
+        port: Port to bind.
+        request_timeout_s: Ceiling on one request, above the agent's own bounds
+            so a hung provider cannot hold a connection open indefinitely.
+        rate_limit_per_minute: Requests one principal may make per minute.
+            Per principal rather than per IP: the thing being protected is the
+            data, and Plan.md R6 is about many small allowed queries
+            reconstructing a restricted whole, which one authenticated caller
+            behind one address can do perfectly well.
+        rate_limit_burst: Requests allowed to arrive at once before the per
+            minute rate applies.
+        max_question_chars: Ceiling on a question. A prompt-sized question is a
+            way to spend a context window and to bury an injection in the
+            middle of it.
+        max_conversation_turns: Turns retained per conversation.
+        max_conversations: Conversations retained in the process.
+        docs_enabled: Whether to publish the interactive docs and the OpenAPI
+            schema. On by default -- Phase 7 acceptance criterion 3 requires the
+            schema -- and separately switchable because a public deployment may
+            not want to advertise its surface.
+    """
+
+    host: str = Field(default="127.0.0.1", min_length=1, validation_alias="ERP_API_HOST")
+    port: int = Field(default=8000, ge=1, le=65_535, validation_alias="ERP_API_PORT")
+    request_timeout_s: float = Field(
+        default=90.0, gt=0.0, le=600.0, validation_alias="ERP_API_REQUEST_TIMEOUT_S"
+    )
+    rate_limit_per_minute: int = Field(
+        default=30, ge=1, le=10_000, validation_alias="ERP_API_RATE_LIMIT_PER_MINUTE"
+    )
+    rate_limit_burst: int = Field(
+        default=5, ge=1, le=1_000, validation_alias="ERP_API_RATE_LIMIT_BURST"
+    )
+    max_question_chars: int = Field(
+        default=2_000, ge=1, le=32_000, validation_alias="ERP_API_MAX_QUESTION_CHARS"
+    )
+    max_conversation_turns: int = Field(
+        default=6, ge=1, le=100, validation_alias="ERP_API_MAX_CONVERSATION_TURNS"
+    )
+    max_conversations: int = Field(
+        default=500, ge=1, le=100_000, validation_alias="ERP_API_MAX_CONVERSATIONS"
+    )
+    docs_enabled: bool = Field(default=True, validation_alias="ERP_API_DOCS_ENABLED")
+
+
 _SECTION_TYPES: dict[str, type[_Section]] = {
     "app": AppSettings,
     "database": DatabaseSettings,
     "security": SecuritySettings,
     "llm": LLMSettings,
     "agent": AgentSettings,
+    "knowledge": KnowledgeSettings,
+    "api": ApiSettings,
 }
 
 
@@ -301,6 +396,8 @@ class Settings(BaseModel):
         security: Principal resolution settings.
         llm: Answer generation settings.
         agent: Bounds on the agent loop.
+        knowledge: Document retrieval settings.
+        api: The HTTP surface.
     """
 
     model_config = {"frozen": True}
@@ -310,6 +407,8 @@ class Settings(BaseModel):
     security: SecuritySettings
     llm: LLMSettings
     agent: AgentSettings
+    knowledge: KnowledgeSettings
+    api: ApiSettings
 
     @classmethod
     def load(cls) -> Self:

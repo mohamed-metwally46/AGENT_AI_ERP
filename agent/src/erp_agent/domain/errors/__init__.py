@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from erp_agent.domain.errors.exceptions import (
     AgentLoopLimitError,
+    AuthenticationError,
     AuthorizationError,
     ConfigurationError,
     DataSourceError,
@@ -14,6 +15,7 @@ from erp_agent.domain.errors.exceptions import (
     OutOfScopeError,
     PrincipalNotFoundError,
     QueryTimeoutError,
+    RateLimitError,
     ReadOnlyViolationError,
     RestrictedFieldError,
     ToolArgumentError,
@@ -23,6 +25,7 @@ from erp_agent.domain.errors.exceptions import (
 
 __all__ = [
     "AgentLoopLimitError",
+    "AuthenticationError",
     "AuthorizationError",
     "ConfigurationError",
     "DataSourceError",
@@ -33,6 +36,7 @@ __all__ = [
     "OutOfScopeError",
     "PrincipalNotFoundError",
     "QueryTimeoutError",
+    "RateLimitError",
     "ReadOnlyViolationError",
     "RestrictedFieldError",
     "ToolArgumentError",

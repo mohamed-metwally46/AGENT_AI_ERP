@@ -96,13 +96,13 @@ def _matches(expression: FilterExpression, payload: dict[str, Any]) -> bool:
             actual = payload.get(expression.field)
             match expression.operator:
                 case FilterOperator.EQ:
-                    return actual == expression.value
+                    return bool(actual == expression.value)
                 case FilterOperator.NE:
-                    return actual != expression.value
+                    return bool(actual != expression.value)
                 case FilterOperator.IN:
-                    return actual in expression.value
+                    return bool(actual in expression.value)
                 case FilterOperator.NOT_IN:
-                    return actual not in expression.value
+                    return bool(actual not in expression.value)
                 case FilterOperator.IS_NULL:
                     return actual is None
                 case FilterOperator.IS_NOT_NULL:

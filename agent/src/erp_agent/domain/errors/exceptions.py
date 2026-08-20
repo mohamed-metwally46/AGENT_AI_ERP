@@ -120,6 +120,22 @@ class ReadOnlyViolationError(DataSourceError):
     default_retryable = False
 
 
+class AuthenticationError(ErpAgentError):
+    """The caller did not prove who they are.
+
+    Distinct from :class:`AuthorizationError`, which is about what a known
+    principal may read. Kept separate because they map to different HTTP
+    statuses and, more importantly, to different fixes: one means "present a
+    credential", the other means "you cannot see that".
+
+    Carries no detail about *why* the credential failed. Unknown, malformed and
+    expired are one answer to the caller, because distinguishing them tells
+    someone probing the endpoint which tokens exist.
+    """
+
+    default_retryable = False
+
+
 class AuthorizationError(ErpAgentError):
     """The principal may not read what was asked for.
 
@@ -147,6 +163,22 @@ class PrincipalNotFoundError(AuthorizationError):
     never as an empty result set, and never by quietly falling back to ``SELF``,
     which would turn an unknown caller into a valid one.
     """
+
+
+class RateLimitError(ErpAgentError):
+    """The caller has spent their request budget.
+
+    A transport concern expressed as a domain error so the whole system keeps
+    one exception family -- but the reason it exists is not transport. Plan.md
+    R6 is exfiltration by aggregation: many individually *authorised* questions
+    reconstructing a restricted whole. No scope predicate refuses those,
+    because none of them is out of scope. A budget is what refuses them.
+
+    Retryable, and the only error in this module that is retryable by waiting
+    rather than by fixing something.
+    """
+
+    default_retryable = True
 
 
 class ToolError(ErpAgentError):

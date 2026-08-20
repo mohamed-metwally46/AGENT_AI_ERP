@@ -7,7 +7,7 @@
 .DEFAULT_GOAL := help
 UV := uv run
 
-.PHONY: help install fmt fmt-check lint types arch test test-unit test-integration test-security cov check clean role
+.PHONY: help install fmt fmt-check lint types arch test test-unit test-integration test-security cov check clean role serve check-config reingest
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -49,6 +49,12 @@ cov: ## Run tests with a coverage report
 	$(UV) pytest --cov --cov-report=term-missing
 
 check: fmt-check lint types arch test ## Everything CI runs
+
+serve: ## Start the HTTP API (proves the write barrier first)
+	$(UV) python -m erp_agent --serve
+
+check-config: ## Report the resolved configuration and prove the write barrier
+	$(UV) python -m erp_agent --check
 
 role: ## (Re-)apply the read-only role to the running mock database
 	docker exec mock-hr-postgres psql -U hr_user -d mock_hr \

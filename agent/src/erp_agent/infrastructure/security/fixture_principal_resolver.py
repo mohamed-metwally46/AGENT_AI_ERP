@@ -34,7 +34,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from erp_agent.domain.errors import ConfigurationError, PrincipalNotFoundError
 from erp_agent.domain.models.principal import Principal
 from erp_agent.domain.models.security_context import DataScope
-from erp_agent.infrastructure.security.principal_resolver_port import PrincipalResolverPort
+from erp_agent.domain.ports.principal_resolver import PrincipalResolverPort
 
 __all__ = ["SUPPORTED_SCHEMA_VERSION", "FixturePrincipalResolver", "default_fixture_path"]
 

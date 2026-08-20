@@ -21,7 +21,7 @@ from erp_agent.core.logging import configure_logging, get_logger
 from erp_agent.domain.errors import ConfigurationError
 from erp_agent.domain.models.diagnostics import DataSourceProbe
 
-__all__ = ["bootstrap", "load_settings", "run_startup_checks", "verify_write_barrier"]
+__all__ = ["bootstrap", "load_settings", "run_startup_checks", "start", "verify_write_barrier"]
 
 _logger = get_logger(__name__)
 
@@ -129,6 +129,46 @@ async def verify_write_barrier(container: Container) -> DataSourceProbe:
     return probe
 
 
+async def start(container: Container) -> Container:
+    """Run the static checks, open the container, and prove the write barrier.
+
+    Split out of :func:`bootstrap` so a caller that already has a container --
+    the API's lifespan, which must open the pool on the loop that will serve
+    requests -- goes through exactly the same start-up as everything else. Two
+    start-up paths would eventually differ, and the difference that matters is
+    whether the barrier was checked.
+
+    Args:
+        container: A constructed, not-yet-opened container.
+
+    Returns:
+        The same container, opened and verified.
+
+    Raises:
+        ConfigurationError: If a static check fails.
+        WriteBarrierError: If the connection is not provably read-only.
+        DataSourceUnavailableError: If the database is unreachable.
+    """
+    checks = run_startup_checks(container.settings)
+    await container.open()
+
+    try:
+        await verify_write_barrier(container)
+    except BaseException:
+        # A container that failed its safety check must not be left holding
+        # connections, whatever the failure was.
+        await container.close()
+        raise
+
+    _logger.info(
+        "startup.checks_passed",
+        checks=[*checks, "write-barrier"],
+        app_env=container.settings.app.env.value,
+        database=container.settings.database.safe_url,
+    )
+    return container
+
+
 async def bootstrap(
     env: Mapping[str, str] | None = None,
     *,
@@ -155,23 +195,4 @@ async def bootstrap(
     """
     settings = load_settings(env, use_env_file=use_env_file)
     configure_logging(settings)
-
-    checks = run_startup_checks(settings)
-    container = Container(settings)
-    await container.open()
-
-    try:
-        await verify_write_barrier(container)
-    except BaseException:
-        # A container that failed its safety check must not be left holding
-        # connections, whatever the failure was.
-        await container.close()
-        raise
-
-    _logger.info(
-        "startup.checks_passed",
-        checks=[*checks, "write-barrier"],
-        app_env=settings.app.env.value,
-        database=settings.database.safe_url,
-    )
-    return container
+    return await start(Container(settings))

@@ -19,20 +19,37 @@ from rag.domain.models import GenerationParams
 from rag.domain.ports.llm_client import LLMClient
 
 from erp_agent.application.agent.loop import AgentLoop
-from erp_agent.application.agent.tool_registry import ToolRegistry, build_hr_registry
-from erp_agent.config import Settings
-from erp_agent.domain.errors import WriteBarrierError
+from erp_agent.application.agent.tool_registry import (
+    ToolRegistry,
+    build_agent_registry,
+    build_hr_registry,
+)
+from erp_agent.application.conversation import ConversationStore
+from erp_agent.application.security import Authenticate
+from erp_agent.application.use_cases import AnswerErpQuestion
+from erp_agent.config import AppEnv, Settings
+from erp_agent.domain.errors import ConfigurationError, WriteBarrierError
 from erp_agent.domain.models.diagnostics import DataSourceProbe
+from erp_agent.domain.ports.access_tokens import AccessTokenPort
 from erp_agent.domain.ports.data_source import ReadOnlyDataSource
 from erp_agent.domain.ports.hr_directory import HrDirectory
+from erp_agent.domain.ports.knowledge import KnowledgeBase
+from erp_agent.domain.ports.principal_resolver import PrincipalResolverPort
 from erp_agent.infrastructure.database.connection import PostgresReadOnlyDataSource
 from erp_agent.infrastructure.database.queries.hr_directory import PostgresHrDirectory
 from erp_agent.infrastructure.llm.factory import build_llm_client
+from erp_agent.infrastructure.rag.document_catalogue import (
+    DocumentCatalogue,
+    default_catalogue_path,
+)
+from erp_agent.infrastructure.security.fixture_access_tokens import (
+    FixtureAccessTokens,
+    default_token_fixture_path,
+)
 from erp_agent.infrastructure.security.fixture_principal_resolver import (
     FixturePrincipalResolver,
     default_fixture_path,
 )
-from erp_agent.infrastructure.security.principal_resolver_port import PrincipalResolverPort
 
 __all__ = ["Container"]
 
@@ -85,9 +102,77 @@ class Container:
         return PostgresHrDirectory(self.data_source)
 
     @cached_property
+    def document_catalogue(self) -> DocumentCatalogue:
+        """Which documents exist and what audience each was ingested under.
+
+        Since Phase 6 the tags on the chunks are the access control; this
+        manifest is what decided them at ingestion, and what resolves a
+        document's human-readable title for a citation.
+
+        Raises:
+            ConfigurationError: If the manifest is missing or malformed. At
+                start-up, so a bad manifest is a boot failure rather than a
+                search that quietly finds nothing.
+        """
+        path = self.settings.knowledge.manifest_path or default_catalogue_path()
+        return DocumentCatalogue.from_file(path)
+
+    @cached_property
+    def knowledge(self) -> KnowledgeBase | None:
+        """Scope-aware document retrieval, or ``None`` when it is switched off.
+
+        Built lazily and by importing RAG's own composition root, so RAG stays
+        configured by RAG: re-declaring its Qdrant URL, collection and embedding
+        model here would create a second vocabulary for one deployment's
+        settings, and the failure mode is two processes pointed at different
+        collections while both look correct.
+
+        Returns:
+            The retrieval adapter, or ``None`` if ``ERP_KNOWLEDGE_ENABLED`` is
+            false. ``None`` means the registry holds six tools instead of seven
+            -- a coherent deployment where no index exists, and better than a
+            document tool that fails on every call.
+
+        Raises:
+            ConfigurationError: If retrieval is enabled but RAG cannot be
+                reached or built. Not swallowed into a degraded six-tool mode:
+                a deployment that asked for document search and silently did not
+                get it answers policy questions from the model's own memory.
+        """
+        if not self.settings.knowledge.enabled:
+            return None
+
+        # Imported here rather than at module scope so a deployment with
+        # retrieval switched off does not need the vector store installed.
+        from rag.core.bootstrap import bootstrap as rag_bootstrap
+
+        from erp_agent.infrastructure.rag.retrieval_adapter import RagRetrievalAdapter
+
+        try:
+            rag = rag_bootstrap()
+        except Exception as exc:
+            raise ConfigurationError(
+                "document retrieval is enabled but the RAG stack could not be "
+                "built; set ERP_KNOWLEDGE_ENABLED=false to serve structured "
+                "questions only",
+                context={"reason": type(exc).__name__},
+            ) from exc
+
+        return RagRetrievalAdapter(retriever=rag.retriever, catalogue=self.document_catalogue)
+
+    @cached_property
     def tool_registry(self) -> ToolRegistry:
-        """The static tool allowlist, validated at construction."""
-        return build_hr_registry(self.hr_directory)
+        """The static tool allowlist, validated at construction.
+
+        Seven tools when document retrieval is wired, six when it is not. The
+        difference is visible in what the model is offered, which is the only
+        honest way to express it: advertising a tool that cannot run invites
+        the model to call it and then be told off for calling it.
+        """
+        knowledge = self.knowledge
+        if knowledge is None:
+            return build_hr_registry(self.hr_directory)
+        return build_agent_registry(directory=self.hr_directory, knowledge=knowledge)
 
     @cached_property
     def llm_client(self) -> LLMClient:
@@ -135,6 +220,63 @@ class Container:
             tool_timeout_s=agent.tool_timeout_s,
             max_result_chars=agent.max_result_chars,
         )
+
+    @cached_property
+    def access_tokens(self) -> AccessTokenPort:
+        """Authenticates a bearer credential.
+
+        The packaged dev fixture is refused in production. It holds static,
+        non-expiring credentials committed to the repository, and the one place
+        that can tell it is being used unintentionally is here -- the fixture
+        itself does not know what environment it is in.
+
+        Raises:
+            ConfigurationError: If the fixture is missing or malformed, or if
+                the packaged dev fixture would be used in production.
+        """
+        configured = self.settings.security.access_token_fixture_path
+        if configured is None and self.settings.app.env is AppEnv.PRODUCTION:
+            raise ConfigurationError(
+                "ERP_ACCESS_TOKEN_FIXTURE_PATH is unset, so the packaged dev "
+                "credentials would be used; those are static, non-expiring and "
+                "committed to the repository, and must not authenticate a "
+                "production deployment",
+                context={"variable": "ERP_ACCESS_TOKEN_FIXTURE_PATH"},
+            )
+        return FixtureAccessTokens.from_file(configured or default_token_fixture_path())
+
+    @cached_property
+    def conversations(self) -> ConversationStore:
+        """Bounded conversation history, in this process."""
+        api = self.settings.api
+        return ConversationStore(
+            max_turns=api.max_conversation_turns,
+            max_conversations=api.max_conversations,
+        )
+
+    @cached_property
+    def authenticate(self) -> Authenticate:
+        """Turns a bearer credential into a resolved caller.
+
+        ``manager_of`` is not wired: ``TEAM`` scope therefore narrows to the
+        principal themselves rather than reaching their reports. That is the
+        safe direction to be wrong in, and closing it means a recursive query
+        over the reporting tree, which belongs with the Phase 9 work that
+        replaces both fixtures with real joins.
+        """
+        return Authenticate(tokens=self.access_tokens, principals=self.principal_resolver)
+
+    def answer_question(self, llm: LLMClient | None = None) -> AnswerErpQuestion:
+        """Build the use case behind ``POST /ask``.
+
+        Args:
+            llm: Overrides the configured client. Tests pass a scripted one;
+                nothing else should.
+
+        Returns:
+            The use case, wired to the loop and the conversation store.
+        """
+        return AnswerErpQuestion(loop=self.agent_loop(llm), conversations=self.conversations)
 
     @cached_property
     def principal_resolver(self) -> PrincipalResolverPort:
