@@ -1,0 +1,29 @@
+# Which ingested documents exist, and who may read them.
+#
+# Stands in for document-level ACLs, which the ERP has only for
+# `project_documents` (Plan.md gap S4), and for the chunk security metadata that
+# `ChunkMetadata` does not yet carry (gap G3). Phase 6 moves these fields onto
+# the chunk payload and deletes this file.
+#
+# A document that is ingested but NOT listed here is invisible to everyone. That
+# is deliberate: an untagged document has no known audience, and the safe
+# default for "we do not know who may read this" is nobody.
+#
+# document_id is the identifier RAG stamps on every chunk. Recover it with:
+#   curl -s localhost:6333/collections/document_chunks/points/scroll \
+#     -d '{"limit":1000,"with_payload":["document_id","filename"]}'
+
+schema_version: 1
+
+documents:
+  - document_id: "47a9adb9952e647654ade17ec397b664"
+    title: "Annual Leave Policy"
+    access_level: public
+
+  - document_id: "dc1dca3425232f7d80796aa557165d20"
+    title: "Overtime Policy"
+    access_level: public
+
+  - document_id: "fa698b8cfb8bf9319712cd7801032f48"
+    title: "Code of Conduct"
+    access_level: public

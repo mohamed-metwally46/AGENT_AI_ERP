@@ -1,0 +1,43 @@
+# Documents for the test suite.
+#
+# Same schema and loader as the packaged dev manifest, separate file on purpose:
+# these entries exercise every access level, including the team- and
+# private-scoped cases the dev manifest has no need for.
+#
+# Runtime code must never read this file.
+
+schema_version: 1
+
+documents:
+  # Company policy: readable by anyone authenticated. An employee who cannot
+  # read the leave policy cannot check their own leave.
+  - document_id: "47a9adb9952e647654ade17ec397b664"
+    title: "Annual Leave Policy"
+    access_level: public
+
+  - document_id: "dc1dca3425232f7d80796aa557165d20"
+    title: "Overtime Policy"
+    access_level: public
+
+  - document_id: "fa698b8cfb8bf9319712cd7801032f48"
+    title: "Code of Conduct"
+    access_level: public
+
+  # Department-scoped: only a DEPARTMENT-scoped principal in that department,
+  # or ORGANISATION scope, may read it.
+  - document_id: "doc-engineering-runbook"
+    title: "Engineering On-Call Runbook"
+    access_level: team
+    department: "00000000-0000-0000-0000-0000000000d9"
+
+  # Branch-scoped.
+  - document_id: "doc-cairo-handbook"
+    title: "Cairo Branch Handbook"
+    access_level: team
+    branch: "00000000-0000-0000-0000-0000000000b1"
+
+  # Private: only the named owner.
+  - document_id: "doc-private-note"
+    title: "Private Note"
+    access_level: private
+    owner_employee_number: "00000000-0000-0000-0000-000000000005"

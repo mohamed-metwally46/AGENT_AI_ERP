@@ -1,0 +1,74 @@
+# Principals for the test suite.
+#
+# Structurally identical to src/erp_agent/infrastructure/security/fixtures/
+# principals.dev.yaml -- same schema, same loader -- but a separate file on
+# purpose. The dev fixture carries uuids from a specific database seed and stops
+# resolving after `docker compose down -v`; unit tests must stay hermetic, so
+# these ids are synthetic and never change.
+#
+# Runtime code must never read this file. Nothing under tests/ is on the
+# application's path.
+
+schema_version: 1
+
+principals:
+  # Organisation scope: reads everything, restricted by nothing.
+  - user_id: "9001"
+    employee_id: "00000000-0000-0000-0000-000000000001"
+    scope: organisation
+    dept_id: "00000000-0000-0000-0000-0000000000d1"
+    branch_id: "00000000-0000-0000-0000-0000000000b1"
+    role_names:
+      - executive
+
+  # Branch scope, with an HR role -- contact PII about others is readable,
+  # compensation is not.
+  - user_id: "9002"
+    employee_id: "00000000-0000-0000-0000-000000000002"
+    scope: branch
+    dept_id: "00000000-0000-0000-0000-0000000000d1"
+    branch_id: "00000000-0000-0000-0000-0000000000b1"
+    allowed_branch_ids:
+      - "00000000-0000-0000-0000-0000000000b1"
+      - "00000000-0000-0000-0000-0000000000b2"
+    role_names:
+      - hr_manager
+
+  # Department scope.
+  - user_id: "9003"
+    employee_id: "00000000-0000-0000-0000-000000000003"
+    scope: department
+    dept_id: "00000000-0000-0000-0000-0000000000d2"
+    branch_id: "00000000-0000-0000-0000-0000000000b1"
+    role_names:
+      - manager
+
+  # Team scope. `manager_of` is absent by design: the reporting tree is computed
+  # from the ERP, never asserted by the identity store.
+  - user_id: "9004"
+    employee_id: "00000000-0000-0000-0000-000000000004"
+    scope: team
+    dept_id: "00000000-0000-0000-0000-0000000000d2"
+    branch_id: "00000000-0000-0000-0000-0000000000b1"
+    role_names:
+      - team_lead
+
+  # Self scope, no roles: the narrowest principal the system can hold.
+  - user_id: "9005"
+    employee_id: "00000000-0000-0000-0000-000000000005"
+    scope: self
+    dept_id: "00000000-0000-0000-0000-0000000000d2"
+    branch_id: "00000000-0000-0000-0000-0000000000b1"
+    role_names:
+      - employee
+
+  # Payroll role at organisation scope: the only principal that may read
+  # another employee's compensation.
+  - user_id: "9006"
+    employee_id: "00000000-0000-0000-0000-000000000006"
+    scope: organisation
+    dept_id: "00000000-0000-0000-0000-0000000000d3"
+    branch_id: "00000000-0000-0000-0000-0000000000b1"
+    role_names:
+      - payroll
+      - finance

@@ -1,0 +1,154 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "erp-agent"
+version = "0.1.0"
+description = "Read-only ERP question-answering agent over the HR database and the Document RAG."
+readme = "README.md"
+# Matches the RAG package's floor. The two are developed together and the agent
+# consumes RAG as a library from Phase 3 onward.
+requires-python = ">=3.12"
+license = { text = "Proprietary" }
+
+# Dependencies arrive with the phase that first needs them, so the project stays
+# installable and runnable after every phase (Plan.md section 11).
+dependencies = [
+    "pydantic>=2.9",
+    "pydantic-settings>=2.5",
+    "structlog>=24.4",
+    # Phase 1 -- the read-only data access foundation.
+    "psycopg[binary,pool]>=3.2",
+    # Phase 2 -- principal fixtures, until the Platform `users` tables exist.
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=5.0",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.7",
+    "mypy>=1.13",
+    "import-linter>=2.1",
+    "types-PyYAML>=6.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/erp_agent"]
+# The dev principal fixture is data, not code, and must travel with the package.
+artifacts = ["src/erp_agent/infrastructure/security/fixtures/*.yaml"]
+
+
+# --------------------------------------------------------------------------- #
+# Ruff -- formatting and linting. Mirrors RAG's configuration deliberately:
+# one idiom across the repository (Plan.md section 10).
+# --------------------------------------------------------------------------- #
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W", "F", "I", "N", "UP", "B", "C4", "SIM", "TID", "RUF", "D", "ANN",
+    "S",    # flake8-bandit: this package's whole job is a security boundary
+]
+ignore = [
+    "D107",    # __init__ docstring -- documented at class level instead
+    "D203",    # conflicts with D211
+    "D213",    # conflicts with D212
+    "ANN401",  # Any is occasionally the honest annotation
+]
+
+[tool.ruff.lint.per-file-ignores]
+# S608 flags f-string SQL. In this package that is the design, not a smell:
+# the only interpolated fragments are scope clauses built by predicates.py
+# (validated identifiers, bound parameters) and module-level column constants.
+# Values are never formatted in -- SqlStatement enforces it and the injection
+# suite in tests/security proves it.
+"src/erp_agent/infrastructure/database/queries/*.py" = ["S608"]
+"tests/**" = [
+    "D100", "D101", "D102", "D103", "D104",
+    "ANN001", "ANN002", "ANN003", "ANN201", "ANN202", "ANN204", "ANN206",
+    "SLF001",
+    "S101",   # assert is the point of a test
+    "S105", "S106",  # test fixtures carry obvious fake credentials
+    "S608",   # tests deliberately build hostile SQL strings to prove they are refused
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+
+# --------------------------------------------------------------------------- #
+# Mypy -- static typing
+# --------------------------------------------------------------------------- #
+[tool.mypy]
+python_version = "3.12"
+packages = ["erp_agent"]
+mypy_path = "src"
+strict = true
+warn_unreachable = true
+show_error_codes = true
+disallow_any_generics = true
+no_implicit_reexport = true
+
+# The RAG package ships no `py.typed` marker, and this phase must not modify it
+# (Plan.md section 7.3 -- RAG is touched exactly once, in Phase 6). Following the
+# untyped import analyses RAG's real source, so `ToolDefinition` and friends keep
+# their types instead of degrading to `Any` and silently disabling strict mode
+# wherever they are used.
+[[tool.mypy.overrides]]
+module = "rag.*"
+follow_untyped_imports = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+
+
+# --------------------------------------------------------------------------- #
+# Pytest
+# --------------------------------------------------------------------------- #
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = ["--strict-markers", "--strict-config", "-ra"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "unit: fast, hermetic tests with no external dependencies",
+    "integration: tests requiring real infrastructure (Postgres, Qdrant)",
+    "e2e: full-stack tests against a running system",
+    "security: authorization, redaction and injection-resistance gates",
+    "architecture: layering and dependency-rule guards",
+]
+filterwarnings = [
+    # A DeprecationWarning in our own code is a bug report from the future.
+    "error",
+    # google-genai (reached through RAG's container) touches a typing internal
+    # that Python deprecated. Not ours to fix, and scoped to this one message so
+    # our own deprecations still fail. RAG's pyproject carries the same line.
+    "ignore:'_UnionGenericAlias' is deprecated:DeprecationWarning",
+]
+
+
+# --------------------------------------------------------------------------- #
+# Coverage
+# --------------------------------------------------------------------------- #
+[tool.coverage.run]
+source = ["src/erp_agent"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "\\.\\.\\.",
+]

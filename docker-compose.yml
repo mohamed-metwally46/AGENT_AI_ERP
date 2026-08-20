@@ -1,0 +1,30 @@
+services:
+  mock-hr-postgres:
+    image: postgres:16-alpine
+    container_name: mock-hr-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: mock_hr
+      POSTGRES_USER: hr_user
+      POSTGRES_PASSWORD: hr_password
+      # Deterministic sort/format for the seed data
+      LANG: en_US.utf8
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+    ports:
+      - "5433:5432"
+    volumes:
+      - mock_hr_pgdata:/var/lib/postgresql/data
+      # Full DDL + seed tree, referenced by \i from the bootstrap script
+      - ./database:/database:ro
+      # Only this directory is executed by the postgres entrypoint on first init
+      - ./database/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hr_user -d mock_hr"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+volumes:
+  mock_hr_pgdata:
+    name: mock_hr_pgdata
