@@ -7,7 +7,7 @@
 .DEFAULT_GOAL := help
 UV := uv run
 
-.PHONY: help install fmt fmt-check lint types arch test test-unit test-integration test-security cov check clean role serve check-config reingest
+.PHONY: help install fmt fmt-check lint types arch test test-unit test-integration test-security cov check clean role serve check-config reingest eval eval-live gate
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -48,7 +48,15 @@ test-security: ## Run the security gates
 cov: ## Run tests with a coverage report
 	$(UV) pytest --cov --cov-report=term-missing
 
-check: fmt-check lint types arch test ## Everything CI runs
+eval: ## Run the golden set and gate on the result (deterministic)
+	$(UV) python -m evaluation --json evaluation-report.json
+
+eval-live: ## Same, but let the configured model choose the tools (not reproducible)
+	$(UV) python -m evaluation --mode live --json evaluation-report.json
+
+gate: check eval ## Everything CI runs, including the evaluation gate
+
+check: fmt-check lint types arch test ## Static gates and the test suite
 
 serve: ## Start the HTTP API (proves the write barrier first)
 	$(UV) python -m erp_agent --serve

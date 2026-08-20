@@ -279,6 +279,50 @@ class TestTheRagChangeStayedWhereItWasAllowed:
         assert deleted == [], f"the RAG change must be additive; deleted: {deleted}"
 
 
+class TestTheEvaluationLayerNeverRunsInTheRequestPath:
+    """Section 5.2: the evaluation layer must not run in the request path.
+
+    Guaranteed structurally -- `evaluation/` is outside `src/`, so the shipped
+    package does not contain it -- and asserted here because "outside the
+    package" is a property somebody could undo with one import.
+    """
+
+    def test_no_shipped_module_imports_the_evaluation_layer(self):
+        offenders = [
+            path.relative_to(PACKAGE_ROOT).as_posix()
+            for path in sorted(PACKAGE_ROOT.rglob("*.py"))
+            if "evaluation" in _imported_names(path)
+        ]
+
+        assert offenders == [], f"the request path must not import evaluation: {offenders}"
+
+    def test_the_evaluation_layer_is_not_inside_the_package(self):
+        assert not (PACKAGE_ROOT / "evaluation").exists()
+
+    def test_the_golden_set_is_not_shipped_with_the_package(self):
+        # Golden questions quote real employee numbers and real policy text.
+        # They belong to the repository, not to a wheel somebody deploys.
+        assert list(PACKAGE_ROOT.rglob("golden")) == []
+
+
+def _imported_names(path: Path) -> set[str]:
+    """Top-level module names a file imports."""
+    import ast
+
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8-sig"))
+    except SyntaxError:  # pragma: no cover
+        return set()
+
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            names.add(node.module.split(".")[0])
+    return names
+
+
 class TestRuntimeCodeIsIndependentOfTheTestSuite:
     """`tests/` is pytest-owned. Nothing shipped may read from it.
 

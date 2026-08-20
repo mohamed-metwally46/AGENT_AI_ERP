@@ -1,0 +1,352 @@
+# Structured questions: figures that have exactly one right answer.
+#
+# Every case here carries a control query written by hand and run through the
+# same read-only barrier as the tools. That is the point of the class: a
+# headcount is either right or wrong, and "the model sounded confident" is not
+# evidence. The control query is the independent witness.
+#
+# The numbers below come from the seeded mock database. `docker compose down -v`
+# re-seeds it and they change; the control queries do not, which is why they are
+# here rather than the numbers alone.
+
+schema_version: 1
+
+cases:
+  - id: structured-sales-headcount
+    question: "How many employees are in Sales?"
+    question_class: structured
+    principal: organisation
+    expect_tools: [count_employees]
+    expect_arguments:
+      count_employees: {department: Sales}
+    control_sql: >
+      SELECT count(*) AS total,
+             count(*) FILTER (WHERE e.employment_status = 'active') AS active
+        FROM employees e
+        LEFT JOIN branch_departments d ON d.dept_id = e.dept_id
+       WHERE lower(d.dept_name) = 'sales'
+    expect_row: {total: 12, active: 11}
+    replay:
+      calls:
+        - tool: count_employees
+          arguments: {department: Sales}
+      answer: "Sales has 12 employees, 11 of them active [1]."
+
+  - id: structured-engineering-headcount
+    question: "How many people work in Engineering?"
+    question_class: structured
+    principal: organisation
+    expect_tools: [count_employees]
+    expect_arguments:
+      count_employees: {department: Engineering}
+    control_sql: >
+      SELECT count(*) AS total,
+             count(*) FILTER (WHERE e.employment_status = 'active') AS active
+        FROM employees e
+        LEFT JOIN branch_departments d ON d.dept_id = e.dept_id
+       WHERE lower(d.dept_name) = 'engineering'
+    expect_row: {total: 10, active: 9}
+    replay:
+      calls:
+        - tool: count_employees
+          arguments: {department: Engineering}
+      answer: "Engineering has 10 employees, 9 of them active [1]."
+
+  - id: structured-operations-headcount
+    question: "What is the headcount in Operations?"
+    question_class: structured
+    principal: organisation
+    expect_tools: [count_employees]
+    expect_arguments:
+      count_employees: {department: Operations}
+    control_sql: >
+      SELECT count(*) AS total,
+             count(*) FILTER (WHERE e.employment_status = 'active') AS active
+        FROM employees e
+        LEFT JOIN branch_departments d ON d.dept_id = e.dept_id
+       WHERE lower(d.dept_name) = 'operations'
+    expect_row: {total: 8, active: 7}
+    replay:
+      calls:
+        - tool: count_employees
+          arguments: {department: Operations}
+      answer: "Operations has 8 employees, 7 active [1]."
+
+  - id: structured-finance-headcount
+    question: "How many employees does Finance have?"
+    question_class: structured
+    principal: organisation
+    expect_tools: [count_employees]
+    expect_arguments:
+      count_employees: {department: Finance}
+    control_sql: >
+      SELECT count(*) AS total,
+             count(*) FILTER (WHERE e.employment_status = 'active') AS active
+        FROM employees e
+        LEFT JOIN branch_departments d ON d.dept_id = e.dept_id
+       WHERE lower(d.dept_name) = 'finance'
+    expect_row: {total: 5, active: 4}
+    replay:
+      calls:
+        - tool: count_employees
+          arguments: {department: Finance}
+      answer: "Finance has 5 employees, 4 active [1]."
+
+  - id: structured-hr-headcount
+    question: "How many people are in Human Resources?"
+    question_class: structured
+    principal: organisation
+    expect_tools: [count_employees]
+    expect_arguments:
+      count_employees: {department: Human Resources}
+    control_sql: >
+      SELECT count(*) AS total,
+             count(*) FILTER (WHERE e.employment_status = 'active') AS active
+        FROM employees e
+        LEFT JOIN branch_departments d ON d.dept_id = e.dept_id
+       WHERE lower(d.dept_name) = 'human resources'
+    expect_row: {total: 5, active: 2}
+    note: >
+      The gap between total and active is wide here, which is why the case
+      exists: an answer that reports only one of the two is misleading, and the
+      prompt requires both.
+    replay:
+      calls:
+        - tool: count_employees
+          arguments: {department: Human Resources}
+      answer: "Human Resources has 5 employees on file, of whom 2 are active [1]."
+
+  - id: structured-total-headcount
+    question: "How many employees are there in total?"
+    question_class: structured
+    principal: organisation
+    expect_tools: [count_employees]
+    control_sql: >
+      SELECT count(*) AS total,
+             count(*) FILTER (WHERE employment_status = 'active') AS active
+        FROM employees
+    expect_row: {total: 60, active: 45}
+    replay:
+      calls:
+        - tool: count_employees
+          arguments: {}
+      answer: "There are 60 employees on file, 45 of them active [1]."
+
+  - id: structured-cairo-branch-headcount
+    question: "How many employees are based at the Cairo Head Office?"
+    question_class: structured
+    principal: organisation
+    expect_tools: [count_employees]
+    expect_arguments:
+      count_employees: {branch: Cairo Head Office}
+    control_sql: >
+      SELECT count(*) AS total
+        FROM employees e
+        JOIN organization_branches b ON b.branch_id = e.branch_id
+       WHERE lower(b.branch_name) = 'cairo head office'
+    expect_row: {total: 42}
+    replay:
+      calls:
+        - tool: count_employees
+          arguments: {branch: Cairo Head Office}
+      answer: "42 employees are based at the Cairo Head Office [1]."
+
+  - id: structured-alexandria-branch-headcount
+    question: "How many people work at the Alexandria Branch?"
+    question_class: structured
+    principal: organisation
+    expect_tools: [count_employees]
+    expect_arguments:
+      count_employees: {branch: Alexandria Branch}
+    control_sql: >
+      SELECT count(*) AS total
+        FROM employees e
+        JOIN organization_branches b ON b.branch_id = e.branch_id
+       WHERE lower(b.branch_name) = 'alexandria branch'
+    expect_row: {total: 6}
+    replay:
+      calls:
+        - tool: count_employees
+          arguments: {branch: Alexandria Branch}
+      answer: "6 employees work at the Alexandria Branch [1]."
+
+  - id: structured-marketing-headcount
+    question: "What is the Marketing headcount?"
+    question_class: structured
+    principal: organisation
+    expect_tools: [count_employees]
+    expect_arguments:
+      count_employees: {department: Marketing}
+    control_sql: >
+      SELECT count(*) AS total,
+             count(*) FILTER (WHERE e.employment_status = 'active') AS active
+        FROM employees e
+        LEFT JOIN branch_departments d ON d.dept_id = e.dept_id
+       WHERE lower(d.dept_name) = 'marketing'
+    expect_row: {total: 4, active: 3}
+    replay:
+      calls:
+        - tool: count_employees
+          arguments: {department: Marketing}
+      answer: "Marketing has 4 employees, 3 active [1]."
+
+  - id: structured-customer-support-headcount
+    question: "How many employees are in Customer Support?"
+    question_class: structured
+    principal: organisation
+    expect_tools: [count_employees]
+    expect_arguments:
+      count_employees: {department: Customer Support}
+    control_sql: >
+      SELECT count(*) AS total,
+             count(*) FILTER (WHERE e.employment_status = 'active') AS active
+        FROM employees e
+        LEFT JOIN branch_departments d ON d.dept_id = e.dept_id
+       WHERE lower(d.dept_name) = 'customer support'
+    expect_row: {total: 6, active: 5}
+    replay:
+      calls:
+        - tool: count_employees
+          arguments: {department: Customer Support}
+      answer: "Customer Support has 6 employees, 5 active [1]."
+
+  - id: structured-employee-lookup-by-number
+    question: "Show me the record for EMP-0001."
+    question_class: structured
+    principal: organisation
+    expect_tools: [get_employee]
+    expect_arguments:
+      get_employee: {employee_number: EMP-0001}
+    replay:
+      calls:
+        - tool: get_employee
+          arguments: {employee_number: EMP-0001}
+      answer: "EMP-0001 is on file [1]."
+
+  - id: structured-employee-lookup-second
+    question: "What is EMP-0002's position?"
+    question_class: structured
+    principal: organisation
+    expect_tools: [get_employee]
+    expect_arguments:
+      get_employee: {employee_number: EMP-0002}
+    replay:
+      calls:
+        - tool: get_employee
+          arguments: {employee_number: EMP-0002}
+      answer: "EMP-0002's position is recorded in the directory [1]."
+
+  - id: structured-leave-balance-annual
+    question: "What is EMP-0001's annual leave balance?"
+    question_class: structured
+    principal: organisation
+    expect_tools: [get_leave_balance]
+    expect_arguments:
+      get_leave_balance: {employee_number: EMP-0001, leave_code: ANN}
+    replay:
+      calls:
+        - tool: get_leave_balance
+          arguments: {employee_number: EMP-0001, leave_code: ANN}
+      answer: "EMP-0001's annual leave balance is recorded for the stated fiscal year [1]."
+
+  - id: structured-leave-balance-sick
+    question: "How much sick leave does EMP-0002 have left?"
+    question_class: structured
+    principal: organisation
+    expect_tools: [get_leave_balance]
+    expect_arguments:
+      get_leave_balance: {employee_number: EMP-0002, leave_code: SCK}
+    replay:
+      calls:
+        - tool: get_leave_balance
+          arguments: {employee_number: EMP-0002, leave_code: SCK}
+      answer: "EMP-0002's sick leave balance is recorded for the stated fiscal year [1]."
+
+  - id: structured-leave-policy-annual
+    question: "What is the annual leave entitlement under company policy?"
+    question_class: structured
+    principal: organisation
+    expect_tools: [get_leave_policy]
+    expect_arguments:
+      get_leave_policy: {leave_code: ANN}
+    control_sql: >
+      SELECT lp.annual_entitlement_days AS entitlement,
+             lp.max_carry_forward_days  AS carry_forward,
+             lp.notice_days             AS notice
+        FROM leave_policies lp
+        JOIN leave_types lt ON lt.leave_type_id = lp.leave_type_id
+       WHERE lt.leave_code = 'ANN' AND lp.scope = 'all'
+       LIMIT 1
+    expect_row: {entitlement: 21, carry_forward: 5, notice: 7}
+    replay:
+      calls:
+        - tool: get_leave_policy
+          arguments: {leave_code: ANN}
+      answer: >
+        The organisation-wide annual entitlement is 21 days, with up to 5 days
+        carried forward and 7 days' notice required [1].
+
+  - id: structured-leave-policy-sick
+    question: "What does the sick leave policy allow?"
+    question_class: structured
+    principal: organisation
+    expect_tools: [get_leave_policy]
+    expect_arguments:
+      get_leave_policy: {leave_code: SCK}
+    replay:
+      calls:
+        - tool: get_leave_policy
+          arguments: {leave_code: SCK}
+      answer: "The sick leave entitlement rules are recorded in the policy table [1]."
+
+  - id: structured-leave-requests
+    question: "List EMP-0001's leave requests."
+    question_class: structured
+    principal: organisation
+    expect_tools: [list_leave_requests]
+    expect_arguments:
+      list_leave_requests: {employee_number: EMP-0001}
+    replay:
+      calls:
+        - tool: list_leave_requests
+          arguments: {employee_number: EMP-0001}
+      answer: "EMP-0001's leave requests are listed most recent first [1]."
+
+  - id: structured-leave-requests-filtered
+    question: "Show EMP-0002's approved leave requests."
+    question_class: structured
+    principal: organisation
+    expect_tools: [list_leave_requests]
+    expect_arguments:
+      list_leave_requests: {employee_number: EMP-0002, status: approved}
+    replay:
+      calls:
+        - tool: list_leave_requests
+          arguments: {employee_number: EMP-0002, status: approved}
+      answer: "EMP-0002's approved leave requests are listed [1]."
+
+  - id: structured-attendance-summary
+    question: "What was EMP-0001's attendance in March 2026?"
+    question_class: structured
+    principal: organisation
+    expect_tools: [get_attendance_summary]
+    expect_arguments:
+      get_attendance_summary: {employee_number: EMP-0001, year: 2026, month: 3}
+    replay:
+      calls:
+        - tool: get_attendance_summary
+          arguments: {employee_number: EMP-0001, year: 2026, month: 3}
+      answer: "EMP-0001's March 2026 attendance is summarised in the monthly record [1]."
+
+  - id: structured-attendance-year
+    question: "Summarise EMP-0002's attendance for 2026."
+    question_class: structured
+    principal: organisation
+    expect_tools: [get_attendance_summary]
+    expect_arguments:
+      get_attendance_summary: {employee_number: EMP-0002, year: 2026}
+    replay:
+      calls:
+        - tool: get_attendance_summary
+          arguments: {employee_number: EMP-0002, year: 2026}
+      answer: "EMP-0002's 2026 attendance is summarised by month [1]."

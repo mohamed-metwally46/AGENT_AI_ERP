@@ -1,0 +1,200 @@
+# Document questions: answers that must come from an ingested document, with a
+# citation that resolves.
+#
+# `expect_documents` names filenames, not ids. The harness derives the id with
+# RAG's own rule, so this file cannot drift from the index it measures -- which
+# is what would happen if the hashes were written out and the corpus was
+# re-ingested under a different name.
+#
+# Every case runs as a principal whose scope actually reaches the document it
+# expects. A document case that quietly relied on organisation scope would be
+# measuring retrieval and permission at once and telling you neither.
+
+schema_version: 1
+
+cases:
+  - id: document-annual-leave-entitlement
+    question: "What is the annual leave policy?"
+    question_class: document
+    principal: self
+    expect_tools: [search_documents]
+    expect_documents: [annual_leave_policy.md]
+    replay:
+      calls:
+        - tool: search_documents
+          arguments: {query: "annual leave entitlement policy", top_k: 3}
+      answer: "The handbook sets out the annual leave entitlement and how it accrues [1]."
+
+  - id: document-annual-leave-accrual
+    question: "How does annual leave accrue?"
+    question_class: document
+    principal: self
+    expect_tools: [search_documents]
+    expect_documents: [annual_leave_policy.md]
+    replay:
+      calls:
+        - tool: search_documents
+          arguments: {query: "leave accrues monthly in arrears pro rata", top_k: 3}
+      answer: "Leave accrues monthly in arrears, pro-rata for a part-year joiner [1]."
+
+  - id: document-carry-forward
+    question: "How many unused leave days can I carry into next year?"
+    question_class: document
+    principal: self
+    expect_tools: [search_documents]
+    expect_documents: [annual_leave_policy.md]
+    replay:
+      calls:
+        - tool: search_documents
+          arguments: {query: "carry forward unused days into the following fiscal year", top_k: 3}
+      answer: "The handbook allows up to 5 unused days to be carried forward [1]."
+
+  - id: document-notice-period
+    question: "How much notice do I need to give before taking leave?"
+    question_class: document
+    principal: self
+    expect_tools: [search_documents]
+    expect_documents: [annual_leave_policy.md]
+    replay:
+      calls:
+        - tool: search_documents
+          arguments: {query: "notice before the intended start date of leave", top_k: 3}
+      answer: "The handbook asks for at least 5 working days' notice [1]."
+
+  - id: document-minimum-service
+    question: "Can a new joiner take annual leave immediately?"
+    question_class: document
+    principal: self
+    expect_tools: [search_documents]
+    expect_documents: [annual_leave_policy.md]
+    replay:
+      calls:
+        - tool: search_documents
+          arguments: {query: "first months of service before taking annual leave", top_k: 3}
+      answer: "The handbook restricts annual leave during the first 3 months of service [1]."
+
+  - id: document-overtime-policy
+    question: "What is the overtime policy?"
+    question_class: document
+    principal: self
+    expect_tools: [search_documents]
+    expect_documents: [overtime_policy.md]
+    replay:
+      calls:
+        - tool: search_documents
+          arguments: {query: "overtime policy rate approval", top_k: 3}
+      answer: "The overtime policy sets out when overtime is paid and how it is approved [1]."
+
+  - id: document-overtime-weekend
+    question: "How is weekend overtime treated?"
+    question_class: document
+    principal: self
+    expect_tools: [search_documents]
+    expect_documents: [overtime_policy.md]
+    replay:
+      calls:
+        - tool: search_documents
+          arguments: {query: "weekend overtime rate", top_k: 3}
+      answer: "Weekend overtime is covered by the overtime policy [1]."
+
+  - id: document-code-of-conduct
+    question: "What does the code of conduct say?"
+    question_class: document
+    principal: self
+    expect_tools: [search_documents]
+    expect_documents: [code_of_conduct.md]
+    replay:
+      calls:
+        - tool: search_documents
+          arguments: {query: "code of conduct expectations", top_k: 3}
+      answer: "The code of conduct sets out the standards expected of employees [1]."
+
+  - id: document-conduct-reporting
+    question: "How do I report a conduct concern?"
+    question_class: document
+    principal: self
+    expect_tools: [search_documents]
+    expect_documents: [code_of_conduct.md]
+    replay:
+      calls:
+        - tool: search_documents
+          arguments: {query: "reporting a concern conduct escalation", top_k: 3}
+      answer: "The code of conduct describes how to raise a concern [1]."
+
+  - id: document-engineering-runbook-oncall
+    question: "How does the engineering on-call rotation work?"
+    question_class: document
+    principal: organisation
+    expect_tools: [search_documents]
+    expect_documents: [engineering_runbook.md]
+    note: >
+      Team-scoped document, asked by a principal whose scope reaches it. The
+      security set asks the same question as somebody whose scope does not.
+    replay:
+      calls:
+        - tool: search_documents
+          arguments: {query: "on-call rotation weekly handover", top_k: 3}
+      answer: "The rotation runs weekly with a Monday handover [1]."
+
+  - id: document-engineering-escalation
+    question: "When does an unacknowledged incident escalate?"
+    question_class: document
+    principal: organisation
+    expect_tools: [search_documents]
+    expect_documents: [engineering_runbook.md]
+    replay:
+      calls:
+        - tool: search_documents
+          arguments: {query: "incident escalation unacknowledged minutes manager", top_k: 3}
+      answer: "An unacknowledged incident escalates to the engineering manager [1]."
+
+  - id: document-engineering-deploy-freeze
+    question: "When is there a deploy freeze?"
+    question_class: document
+    principal: organisation
+    expect_tools: [search_documents]
+    expect_documents: [engineering_runbook.md]
+    replay:
+      calls:
+        - tool: search_documents
+          arguments: {query: "deploy freeze Friday incident commander", top_k: 3}
+      answer: "Deploys are frozen after 16:00 on a Friday and during a Severity 1 incident [1]."
+
+  - id: document-cairo-office-hours
+    question: "What are the Cairo office hours?"
+    question_class: document
+    principal: organisation
+    expect_tools: [search_documents]
+    expect_documents: [cairo_handbook.md]
+    replay:
+      calls:
+        - tool: search_documents
+          arguments: {query: "Cairo office hours badge access", top_k: 3}
+      answer: "The Cairo office is open 09:00 to 18:00, Sunday to Thursday [1]."
+
+  - id: document-cairo-transport-allowance
+    question: "Is there a transport allowance in Cairo?"
+    question_class: document
+    principal: organisation
+    expect_tools: [search_documents]
+    expect_documents: [cairo_handbook.md]
+    replay:
+      calls:
+        - tool: search_documents
+          arguments: {query: "transport allowance paid with salary Cairo", top_k: 3}
+      answer: "Cairo-based employees receive a monthly transport allowance [1]."
+
+  - id: document-unanswerable
+    question: "How do we service the company submarine fleet?"
+    question_class: document
+    principal: self
+    expect_tools: [search_documents]
+    note: >
+      Nothing in the corpus answers this. The measurement is that the answer
+      says so instead of improvising, and cites nothing -- which is why the case
+      names no expected document.
+    replay:
+      calls:
+        - tool: search_documents
+          arguments: {query: "submarine fleet maintenance schedule", top_k: 3}
+      answer: "I could not find that in the documents or records available to you."

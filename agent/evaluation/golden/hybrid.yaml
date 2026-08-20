@@ -1,0 +1,287 @@
+# Hybrid questions: a record checked against a rule.
+#
+# The class exists because these are the questions where a single-source answer
+# is confidently wrong. "Do I have enough leave for a five-day trip?" needs the
+# balance *and* the rule, and an answer that has one of them reads exactly like
+# an answer that has both.
+#
+# `expect_both_sources` is the measurement, and it is a property of the answer
+# text: the markers it cites must span a record and a document. An answer that
+# used both and cited one is scored as a miss, which is the intended severity --
+# a reader cannot check what was not cited.
+
+schema_version: 1
+
+cases:
+  - id: hybrid-enough-leave-for-a-trip
+    question: "Does EMP-0001 have enough annual leave for a five-day trip under company policy?"
+    question_class: hybrid
+    principal: organisation
+    expect_tools: [search_documents, get_leave_balance]
+    expect_both_sources: true
+    expect_documents: [annual_leave_policy.md]
+    replay:
+      calls:
+        - tool: search_documents
+          arguments: {query: "annual leave entitlement policy", top_k: 1}
+        - tool: get_leave_balance
+          arguments: {employee_number: EMP-0001, leave_code: ANN}
+      answer: >
+        The handbook sets the standard entitlement [1], and EMP-0001's recorded
+        balance for the stated fiscal year is enough to cover five days [2].
+
+  - id: hybrid-notice-required-before-a-request
+    question: "EMP-0001 wants leave next week. How much notice does policy require?"
+    question_class: hybrid
+    principal: organisation
+    expect_tools: [search_documents, get_leave_policy]
+    expect_both_sources: true
+    expect_documents: [annual_leave_policy.md]
+    note: >
+      The handbook says five working days and the leave_policies row says seven.
+      This is the case the conflict check exists for: the answer must state both
+      rather than pick one.
+    replay:
+      calls:
+        - tool: search_documents
+          arguments: {query: "notice before the intended start date", top_k: 1}
+        - tool: get_leave_policy
+          arguments: {leave_code: ANN}
+      answer: >
+        The two sources differ: the handbook asks for 5 working days' notice [1]
+        while the HR records require 7 days [2]. The recorded rule is the one the
+        system applies.
+
+  - id: hybrid-carry-forward-against-records
+    question: "How many days can EMP-0001 carry forward, and does the handbook agree?"
+    question_class: hybrid
+    principal: organisation
+    expect_tools: [search_documents, get_leave_policy]
+    expect_both_sources: true
+    expect_documents: [annual_leave_policy.md]
+    replay:
+      calls:
+        - tool: search_documents
+          arguments: {query: "carry forward unused days ceiling", top_k: 1}
+        - tool: get_leave_policy
+          arguments: {leave_code: ANN}
+      answer: >
+        The handbook allows up to 5 unused days to be carried forward [1], and
+        the recorded policy agrees [2].
+
+  - id: hybrid-minimum-service-against-records
+    question: "Can EMP-0002 take annual leave yet, given the minimum service rule?"
+    question_class: hybrid
+    principal: organisation
+    expect_tools: [search_documents, get_leave_policy]
+    expect_both_sources: true
+    expect_documents: [annual_leave_policy.md]
+    replay:
+      calls:
+        - tool: search_documents
+          arguments: {query: "months of service before taking annual leave", top_k: 1}
+        - tool: get_leave_policy
+          arguments: {leave_code: ANN}
+      answer: >
+        The sources disagree on minimum service: the handbook says 3 months [1]
+        and the records require 6 [2].
+
+  - id: hybrid-entitlement-agreement
+    question: "Does the handbook's stated entitlement match the HR records?"
+    question_class: hybrid
+    principal: organisation
+    expect_tools: [search_documents, get_leave_policy]
+    expect_both_sources: true
+    expect_documents: [annual_leave_policy.md]
+    control_sql: >
+      SELECT lp.annual_entitlement_days AS entitlement
+        FROM leave_policies lp
+        JOIN leave_types lt ON lt.leave_type_id = lp.leave_type_id
+       WHERE lt.leave_code = 'ANN' AND lp.scope = 'all'
+       LIMIT 1
+    expect_row: {entitlement: 21}
+    replay:
+      calls:
+        - tool: search_documents
+          arguments: {query: "standard entitlement working days per fiscal year", top_k: 1}
+        - tool: get_leave_policy
+          arguments: {leave_code: ANN}
+      answer: >
+        Both agree on 21 days: the handbook states it [1] and the organisation-wide
+        policy row records it [2].
+
+  - id: hybrid-overtime-eligibility
+    question: "Is EMP-0001 eligible for overtime, and what does the policy say?"
+    question_class: hybrid
+    principal: organisation
+    expect_tools: [search_documents, get_employee]
+    expect_both_sources: true
+    expect_documents: [overtime_policy.md]
+    replay:
+      calls:
+        - tool: search_documents
+          arguments: {query: "overtime eligibility approval", top_k: 1}
+        - tool: get_employee
+          arguments: {employee_number: EMP-0001}
+      answer: >
+        The overtime policy sets out eligibility [1], and EMP-0001's grade is on
+        the employee record [2].
+
+  - id: hybrid-attendance-against-conduct
+    question: "Does EMP-0001's attendance meet the standard the code of conduct sets?"
+    question_class: hybrid
+    principal: organisation
+    expect_tools: [search_documents, get_attendance_summary]
+    expect_both_sources: true
+    expect_documents: [code_of_conduct.md]
+    replay:
+      calls:
+        - tool: search_documents
+          arguments: {query: "conduct standards punctuality attendance", top_k: 1}
+        - tool: get_attendance_summary
+          arguments: {employee_number: EMP-0001, year: 2026, month: 3}
+      answer: >
+        The code of conduct states the expectation [1] and the March attendance
+        record shows what was logged [2].
+
+  - id: hybrid-leave-requests-against-notice
+    question: "Did EMP-0001's leave requests give the notice the handbook asks for?"
+    question_class: hybrid
+    principal: organisation
+    expect_tools: [search_documents, list_leave_requests]
+    expect_both_sources: true
+    expect_documents: [annual_leave_policy.md]
+    replay:
+      calls:
+        - tool: search_documents
+          arguments: {query: "notice requirement before leave starts", top_k: 1}
+        - tool: get_leave_policy
+          arguments: {leave_code: ANN}
+      answer: >
+        The handbook's notice requirement [1] is stricter than the recorded rule
+        [2]; the requests on file are listed against the recorded one.
+    note: >
+      Deliberately scripted to call a different tool from the one expected, so
+      the tool-selection metric has at least one case it can actually score as a
+      miss in live mode. In replay mode selection is not measured at all.
+
+  - id: hybrid-cairo-allowance-for-an-employee
+    question: "Does EMP-0001 get the Cairo transport allowance?"
+    question_class: hybrid
+    principal: organisation
+    expect_tools: [search_documents, get_employee]
+    expect_both_sources: true
+    expect_documents: [cairo_handbook.md]
+    replay:
+      calls:
+        - tool: search_documents
+          arguments: {query: "transport allowance branch specific Cairo", top_k: 1}
+        - tool: get_employee
+          arguments: {employee_number: EMP-0001}
+      answer: >
+        The allowance is branch-specific [1], and EMP-0001's branch is on the
+        employee record [2].
+
+  - id: hybrid-oncall-and-headcount
+    question: "How many engineers are there, and how does the on-call rotation work?"
+    question_class: hybrid
+    principal: organisation
+    expect_tools: [search_documents, count_employees]
+    expect_both_sources: true
+    expect_documents: [engineering_runbook.md]
+    control_sql: >
+      SELECT count(*) AS total
+        FROM employees e
+        LEFT JOIN branch_departments d ON d.dept_id = e.dept_id
+       WHERE lower(d.dept_name) = 'engineering'
+    expect_row: {total: 10}
+    replay:
+      calls:
+        - tool: search_documents
+          arguments: {query: "on-call rotation weekly handover", top_k: 1}
+        - tool: count_employees
+          arguments: {department: Engineering}
+      answer: >
+        The rotation runs weekly [1], and Engineering has 10 employees on file [2].
+
+  - id: hybrid-sick-leave-rule-and-balance
+    question: "What is EMP-0002's sick leave balance and what rule governs it?"
+    question_class: hybrid
+    principal: organisation
+    expect_tools: [get_leave_policy, get_leave_balance]
+    note: >
+      Both sources here are structured -- there is no sick leave document -- so
+      `expect_both_sources` is deliberately absent. A hybrid question is not
+      always a document question, and scoring this one against a citation it
+      could never earn would be a false failure.
+    replay:
+      calls:
+        - tool: get_leave_policy
+          arguments: {leave_code: SCK}
+        - tool: get_leave_balance
+          arguments: {employee_number: EMP-0002, leave_code: SCK}
+      answer: "The sick leave rule [1] and EMP-0002's recorded balance [2] are both on file."
+
+  - id: hybrid-entitlement-and-balance
+    question: "What is EMP-0001's annual entitlement and how much is left?"
+    question_class: hybrid
+    principal: organisation
+    expect_tools: [get_leave_policy, get_leave_balance]
+    replay:
+      calls:
+        - tool: get_leave_policy
+          arguments: {leave_code: ANN}
+        - tool: get_leave_balance
+          arguments: {employee_number: EMP-0001, leave_code: ANN}
+      answer: "The entitlement rule [1] and the recorded balance [2] are both on file."
+
+  - id: hybrid-self-leave-against-policy
+    question: "Do I have enough annual leave left for a week off?"
+    question_class: hybrid
+    principal: self
+    expect_tools: [search_documents, get_leave_policy]
+    expect_both_sources: true
+    expect_documents: [annual_leave_policy.md]
+    note: >
+      Asked at the narrowest scope. The document leg must still work -- company
+      policy is readable by everyone, and an employee who cannot read the leave
+      policy cannot check their own leave.
+    replay:
+      calls:
+        - tool: search_documents
+          arguments: {query: "annual leave entitlement", top_k: 1}
+        - tool: get_leave_policy
+          arguments: {leave_code: ANN}
+      answer: "The handbook [1] and the recorded entitlement [2] both apply to you."
+
+  - id: hybrid-conduct-and-headcount
+    question: "How many people does the code of conduct apply to?"
+    question_class: hybrid
+    principal: organisation
+    expect_tools: [search_documents, count_employees]
+    expect_both_sources: true
+    expect_documents: [code_of_conduct.md]
+    control_sql: "SELECT count(*) AS total FROM employees"
+    expect_row: {total: 60}
+    replay:
+      calls:
+        - tool: search_documents
+          arguments: {query: "code of conduct applies to all employees", top_k: 1}
+        - tool: count_employees
+          arguments: {}
+      answer: "The code applies to everyone [1]; there are 60 employees on file [2]."
+
+  - id: hybrid-overtime-and-attendance
+    question: "Did EMP-0002 work overtime in March, and how is it paid?"
+    question_class: hybrid
+    principal: organisation
+    expect_tools: [search_documents, get_attendance_summary]
+    expect_both_sources: true
+    expect_documents: [overtime_policy.md]
+    replay:
+      calls:
+        - tool: search_documents
+          arguments: {query: "overtime paid rate", top_k: 1}
+        - tool: get_attendance_summary
+          arguments: {employee_number: EMP-0002, year: 2026, month: 3}
+      answer: "The overtime policy explains payment [1]; the March record shows the minutes logged [2]."

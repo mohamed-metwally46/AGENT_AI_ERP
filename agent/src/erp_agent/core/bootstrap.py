@@ -160,6 +160,8 @@ async def start(container: Container) -> Container:
         await container.close()
         raise
 
+    await container.warm()
+
     _logger.info(
         "startup.checks_passed",
         checks=[*checks, "write-barrier"],

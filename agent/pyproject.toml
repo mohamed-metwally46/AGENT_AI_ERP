@@ -101,8 +101,8 @@ ban-relative-imports = "all"
 # --------------------------------------------------------------------------- #
 [tool.mypy]
 python_version = "3.12"
-packages = ["erp_agent"]
-mypy_path = "src"
+packages = ["erp_agent", "evaluation"]
+mypy_path = "src:."
 strict = true
 warn_unreachable = true
 show_error_codes = true
@@ -128,7 +128,7 @@ disallow_untyped_defs = false
 # --------------------------------------------------------------------------- #
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 addopts = ["--strict-markers", "--strict-config", "-ra"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

@@ -296,20 +296,29 @@ class KnowledgeSettings(_Section):
             no other layer and cannot know where an infrastructure file lives.
         module: Functional area stamped at ingestion, recorded here so the
             deployment that ingests and the deployment that reads agree.
+        rag_env_file: Where RAG's own configuration lives, when it is not
+            already in this process's environment. A container deployment
+            exports one environment and needs nothing here; a developer running
+            the agent from ``agent/`` has RAG's settings in ``../RAG/.env``, and
+            without this the process starts and then fails on the first document
+            question. Naming the file is not the same as re-declaring its
+            contents: this points at RAG's configuration, it does not copy it.
     """
 
     enabled: bool = Field(default=True, validation_alias="ERP_KNOWLEDGE_ENABLED")
     manifest_path: Path | None = Field(default=None, validation_alias="ERP_DOCUMENT_MANIFEST_PATH")
     module: str | None = Field(default=None, validation_alias="ERP_DOCUMENT_MODULE")
+    rag_env_file: Path | None = Field(default=None, validation_alias="ERP_RAG_ENV_FILE")
 
     @model_validator(mode="after")
-    def _configured_manifest_must_exist(self) -> Self:
-        """Reject a configured manifest path that is not a readable file."""
-        path = self.manifest_path
-        if path is not None and not path.is_file():
-            raise ValueError(
-                f"ERP_DOCUMENT_MANIFEST_PATH points at {path}, which is not a readable file"
-            )
+    def _configured_paths_must_exist(self) -> Self:
+        """Reject a configured path that is not a readable file."""
+        for variable, path in (
+            ("ERP_DOCUMENT_MANIFEST_PATH", self.manifest_path),
+            ("ERP_RAG_ENV_FILE", self.rag_env_file),
+        ):
+            if path is not None and not path.is_file():
+                raise ValueError(f"{variable} points at {path}, which is not a readable file")
         return self
 
 

@@ -149,16 +149,37 @@ class Container:
         from erp_agent.infrastructure.rag.retrieval_adapter import RagRetrievalAdapter
 
         try:
-            rag = rag_bootstrap()
+            rag = rag_bootstrap(env=self._rag_environment())
         except Exception as exc:
             raise ConfigurationError(
-                "document retrieval is enabled but the RAG stack could not be "
-                "built; set ERP_KNOWLEDGE_ENABLED=false to serve structured "
-                "questions only",
+                # RAG's own message names the environment variable it wants,
+                # which is the one thing an operator needs. Swallowing it into a
+                # type name -- as this did until the evaluation harness was the
+                # first thing to actually boot RAG in-process -- turns a
+                # one-line fix into an afternoon.
+                f"document retrieval is enabled but the RAG stack could not be built: {exc}. "
+                f"Point ERP_RAG_ENV_FILE at RAG's .env, or set "
+                f"ERP_KNOWLEDGE_ENABLED=false to serve structured questions only",
                 context={"reason": type(exc).__name__},
             ) from exc
 
         return RagRetrievalAdapter(retriever=rag.retriever, catalogue=self.document_catalogue)
+
+    def _rag_environment(self) -> dict[str, str] | None:
+        """RAG's configuration, when it is not already in this process.
+
+        Returns the parsed contents of the configured file, or ``None`` to let
+        RAG read the process environment as it normally would. Parsed rather
+        than re-declared: the agent does not know or care what is in there, it
+        only knows where it is.
+        """
+        path = self.settings.knowledge.rag_env_file
+        if path is None:
+            return None
+
+        from dotenv import dotenv_values
+
+        return {key: value for key, value in dotenv_values(path).items() if value is not None}
 
     @cached_property
     def tool_registry(self) -> ToolRegistry:
@@ -306,6 +327,21 @@ class Container:
             DataSourceUnavailableError: If the database is unreachable.
         """
         await self._postgres.open()
+
+    async def warm(self) -> None:
+        """Do the expensive lazy work now, not inside the first request.
+
+        Only the retriever has any today: its embedding model loads on first
+        use and takes long enough to exceed the loop's per-tool ceiling.
+
+        Duck-typed rather than widened into the ``KnowledgeBase`` port, for the
+        same reason the loop duck-types ``render_for_model``: warming is a
+        property of an implementation that has something slow to load, not of
+        what it means to be a knowledge base.
+        """
+        warm = getattr(self.knowledge, "warm", None)
+        if callable(warm):
+            await warm()
 
     async def close(self) -> None:
         """Release every resource the container owns."""

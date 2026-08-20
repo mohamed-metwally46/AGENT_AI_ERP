@@ -19,10 +19,10 @@ security requirements and the future ERP integration strategy live here.
 
 | | |
 |---|---|
-| **CURRENT PHASE** | Phase 7 — API Layer |
-| **CURRENT TASK** | *(none — Phase 7 complete; awaiting go-ahead for Phase 8)* |
-| **NEXT TASK** | **Phase 8 — Evaluation Layer** |
-| **COMPLETED TASKS** | Phase 0 (0.1–0.3); Phase 1 (1.1); Phase 2 (2.1–2.3); Phase 3; Phase 4; Phase 5; Phase 6; Phase 7 |
+| **CURRENT PHASE** | Phase 8 — Evaluation Layer |
+| **CURRENT TASK** | *(none — Phase 8 complete; awaiting go-ahead for Phase 9)* |
+| **NEXT TASK** | **Phase 9 — ERP Integration Readiness** |
+| **COMPLETED TASKS** | Phase 0 (0.1–0.3); Phase 1 (1.1); Phase 2 (2.1–2.3); Phase 3; Phase 4; Phase 5; Phase 6; Phase 7; Phase 8 |
 
 ### Completed
 
@@ -40,6 +40,7 @@ security requirements and the future ERP integration strategy live here.
 | 5 | Hybrid Q&A — grounding policy (run-wide markers, invented markers stripped), multi-source assembly in the loop, prose-vs-records conflict surfacing, §5.4 prompt contract; 693 tests | 2026-08-20 |
 | 6 | Security Hardening — gap G3 closed additively in RAG (6 indexed security fields), per-chunk permission predicate, tagged ingestion path, reproducible re-ingest; permission map blocked on gap S2 | 2026-08-20 |
 | 7 | API Layer — `POST /ask`, bearer authentication, per-principal rate limiting, bounded conversations, sanitised errors, published OpenAPI; RAG wired into the composition root | 2026-08-20 |
+| 8 | Evaluation Layer — 65 golden cases, retrieval/grounding/tool/security metrics, deterministic replay harness, `make gate`; gap G9 closed | 2026-08-20 |
 
 ### Phase ledger
 
@@ -53,8 +54,8 @@ security requirements and the future ERP integration strategy live here.
 | 5 | Hybrid Q&A | ✅ Complete |
 | 6 | Security Hardening + RAG Metadata Filtering | ✅ Complete (permission map blocked on S2) |
 | 7 | API Layer | ✅ Complete |
-| 8 | Evaluation Layer | ⬜ Next |
-| 9 | ERP Integration Readiness | ⬜ |
+| 8 | Evaluation Layer | ✅ Complete |
+| 9 | ERP Integration Readiness | ⬜ Next |
 
 ---
 
@@ -193,7 +194,7 @@ Verified by reading the source, not assumed:
 | G6 | Tool calling is OpenRouter-only | `LLMClient.respond()` raises by default; the Gemini adapter does not override it |
 | G7 | ~~No API layer~~ **CLOSED in Phase 7** | Was: Streamlit process only. The agent now serves `POST /ask` and `GET /health` with a published OpenAPI schema |
 | G8 | No structured-data capability of any kind | No DB driver, no query layer, no data tools |
-| G9 | No evaluation harness | Correctness tests exist; retrieval/answer quality measurement does not |
+| G9 | ~~No evaluation harness~~ **CLOSED in Phase 8** | Was: correctness tests only. 65 golden cases, four metric modules, and a CI gate that fails on any security violation |
 
 **Design consequence.** G1 and G2 would each require editing RAG. To honour
 "do not modify the RAG", the ERP agent **owns its own tool registry and agent
@@ -1384,7 +1385,52 @@ history is bounded; errors never leak internals.
 
 ---
 
-### Phase 8 — Evaluation Layer
+### Phase 8 — Evaluation Layer ✅ COMPLETE
+
+**Delivered (2026-08-20)** 65 golden cases (20 structured, 15 document, 15
+hybrid, 15 security) as validated data; four metric modules that are pure
+functions over recorded observations; a harness that runs each case through the
+*real* loop, registry, tools, predicates and index; a report that renders once
+for people and once for CI from one object; and `make eval` / `make gate`.
+
+**The measured run** 65/65 cases complete. Retrieval precision 0.963 (target
+0.8), recall 0.963 (0.9), citation validity 1.000 (1.0), grounded answers 1.000,
+both-sources-when-used 1.000, argument fidelity 1.000, query correctness 1.000.
+All three security gates clean.
+
+**Two design decisions that shape what the numbers mean**
+
+*Replay and live are separate modes, and replay does not report tool selection.*
+In replay the model's calls are carried in the case, so the run is deterministic
+and needs no provider — which is what makes it a usable CI gate. It measures
+everything that is a property of *this system*: argument fidelity, scope
+predicates, citation resolution, leakage, query correctness against an
+independent control query. It cannot measure the model's judgement, and the
+report prints `not measured` rather than 1.000. A metric that reports a perfect
+score for something it did not look at is worse than a missing one, because the
+first gets quoted.
+
+*Only the security rows are gates.* Plan.md section 12 says a single leak fails
+the suite, so those are counts with a ceiling of zero — and a security row that
+was *not measured* also fails, because "we did not check" is not "nothing was
+wrong". The quality rows are reported and tracked against a baseline instead:
+gating a build on a model's tool choice makes the gate the first thing somebody
+silences.
+
+**What the hallucination metric actually is** A general "claims not in context"
+check needs a model to judge it, which would put a language model inside the
+gate that decides whether a language model regressed. So the measurement is the
+sharpest deterministic subset: every figure in an answer must appear in
+something the model was shown. For an ERP that is the claim that matters. A
+fabricated *sentence* containing no figure passes, and the report says so.
+
+**Found by running it** Two defects, neither visible by reading the code. The
+container swallowed RAG's start-up error into a type name, so "RAG could not be
+built" gave an operator nothing to act on — the evaluation was the first thing
+to boot RAG in-process. And the first document case timed out: the embedding
+model loads lazily inside the first retrieval and exceeds the loop's per-tool
+ceiling. That was recorded as an operational note in Phase 5 and then actually
+happened; `RagRetrievalAdapter.warm()` now runs at start-up.
 
 **Goal** Make quality measurable and regressions visible.
 
@@ -1396,10 +1442,17 @@ history is bounded; errors never leak internals.
 **Tests** The harness is deterministic against fakes; metrics are reproducible.
 
 **Acceptance criteria**
-1. ≥ 60 golden questions: 15 document, 20 structured, 15 hybrid, 10 security.
+1. ≥ 60 golden questions: 15 document, 20 structured, 15 hybrid, 10 security. — **PASS**
+   (65: 20 / 15 / 15 / 15, asserted by a test so the set cannot quietly shrink)
 2. Metrics reported: retrieval precision/recall, citation validity, hallucination
-   rate, tool-selection accuracy, parameter accuracy, authorization-violation count.
-3. CI fails on regression beyond an agreed threshold.
+   rate, tool-selection accuracy, parameter accuracy, authorization-violation count. — **PASS**,
+   with two stated qualifications: tool-selection and parameter accuracy are
+   reported as `not measured` in replay mode rather than as 1.000, and the
+   hallucination rate is the ungrounded-figure rate rather than a general claim
+   check. Both are printed as such in the report.
+3. CI fails on regression beyond an agreed threshold. — **PASS**: `make gate`
+   exits non-zero on any security violation, any incomplete case, or a quality
+   metric more than 2 points below a recorded baseline.
 
 ---
 

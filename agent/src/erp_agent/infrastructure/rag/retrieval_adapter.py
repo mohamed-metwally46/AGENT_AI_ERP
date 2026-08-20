@@ -23,6 +23,8 @@ from __future__ import annotations
 
 from rag.domain.errors import RAGError, RerankingError
 from rag.domain.models.chunk import ScoredChunk
+from rag.domain.models.filters import FieldFilter, FilterOperator
+from rag.domain.models.metadata import MetadataField
 from rag.domain.models.query import RetrievalRequest
 from rag.domain.ports.reranker import Reranker
 from rag.domain.ports.retriever import Retriever
@@ -44,6 +46,9 @@ __all__ = ["RagRetrievalAdapter"]
 #: ratio: retrieve broadly, then let the cross-encoder choose.
 _CANDIDATE_MULTIPLIER = 4
 _MAX_CANDIDATES = 40
+
+#: A document id nothing carries, so the warm-up matches no chunk.
+_NOTHING = "__warm_up__"
 
 
 class RagRetrievalAdapter(KnowledgeBase):
@@ -67,6 +72,33 @@ class RagRetrievalAdapter(KnowledgeBase):
         self._retriever = retriever
         self._catalogue = catalogue
         self._reranker = reranker
+
+    async def warm(self) -> None:
+        """Load the embedding model now, rather than inside the first question.
+
+        The model loads lazily on first use and takes several seconds, which is
+        long enough to exceed the loop's per-tool ceiling. That was recorded as
+        an operational note in Phase 5 and then actually happened: the first
+        document case of the first evaluation run timed out, and nothing else
+        did.
+
+        Warming with a filter that matches nothing, so this cannot return a
+        chunk to anybody -- there is no principal here, and a warm-up that
+        retrieved real content would be a read with no scope behind it.
+
+        Failures are swallowed. A cold model is slower, not unsafe, and a
+        start-up that refused to serve because a warm-up query failed would be
+        trading a real outage for a latency saving.
+        """
+        request = RetrievalRequest(
+            query_text="warm up",
+            top_k=1,
+            filters=FieldFilter(MetadataField.DOCUMENT_ID, FilterOperator.EQ, _NOTHING),
+        )
+        try:
+            await self._retriever.retrieve(request)
+        except RAGError:
+            return
 
     async def search(
         self,
