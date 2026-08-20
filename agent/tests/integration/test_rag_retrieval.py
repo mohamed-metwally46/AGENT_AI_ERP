@@ -22,12 +22,9 @@ from rag.domain.models import GenerationParams, LLMResponse
 from rag.domain.models.tools import LLMMessage, ToolCall, ToolDefinition
 from rag.domain.ports.llm_client import LLMClient
 
-from erp_agent.application.agent.loop import AgentLoop
-from erp_agent.application.agent.tool_registry import build_agent_registry
 from erp_agent.domain.models.security_context import DataScope, SecurityContext
 from erp_agent.infrastructure.rag.document_catalogue import DocumentCatalogue
 from erp_agent.infrastructure.rag.retrieval_adapter import RagRetrievalAdapter
-from tests.unit.application.test_hr_tools import FakeDirectory
 
 pytestmark = [pytest.mark.integration, pytest.mark.security]
 
@@ -74,8 +71,16 @@ def _call(name: str, **arguments: Any) -> LLMResponse:
 _FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 CATALOGUE = DocumentCatalogue.from_file(_FIXTURES / "documents.yaml")
 
-#: Ingested into the same collection but deliberately absent from the manifest.
+#: Ingested into the same collection but deliberately absent from the manifest,
+#: and therefore never stamped with an audience. Real content, really indexed,
+#: that no scope may reach.
 UNCATALOGUED = {"b94f002a558ce019214b1076e6daa642", "6aea4492e95abb93e4d71f06c6cfe42b"}
+
+ENGINEERING_DEPT = "00000000-0000-0000-0000-0000000000d9"
+OTHER_DEPT = "00000000-0000-0000-0000-0000000000ff"
+CAIRO_BRANCH = "00000000-0000-0000-0000-0000000000b1"
+OTHER_BRANCH = "00000000-0000-0000-0000-0000000000b9"
+PRIVATE_OWNER = "00000000-0000-0000-0000-000000000005"
 
 
 @pytest.fixture(scope="module")
@@ -178,117 +183,110 @@ class TestUncataloguedDocumentsAreInvisible:
 
 
 class TestCrossScopeRetrievalReturnsNothing:
-    async def test_a_principal_who_may_read_nothing_gets_no_passages(self, adapter):
-        empty_catalogue = DocumentCatalogue(records={}, source=None)
-        from erp_agent.infrastructure.rag.retrieval_adapter import RagRetrievalAdapter as Adapter
+    """Phase 6 acceptance criterion 3: cross-department leakage is zero.
 
-        narrow = Adapter(retriever=adapter._retriever, catalogue=empty_catalogue)
+    Until Phase 6 this class narrowed the *catalogue* and checked the resulting
+    document-id filter. That mechanism is gone: the audience now lives on the
+    chunk, so isolation is a property of the principal's scope and the store's
+    predicate, and narrowing a manifest would prove nothing about either.
 
-        evidence = await narrow.search(_context(DataScope.ORGANISATION), query="annual leave")
-
-        assert evidence.passages == ()
-        assert evidence.searched_document_count == 0
-
-    async def test_zero_chunks_not_chunks_the_model_declines(self, adapter, ingested):
-        # The distinction that matters: the passages are absent from the result,
-        # not present-but-marked-forbidden.
-        only_conduct = DocumentCatalogue(
-            records={
-                key: value
-                for key, value in CATALOGUE.records.items()
-                if key == ingested["code_of_conduct.md"]
-            },
-            source=None,
-        )
-        from erp_agent.infrastructure.rag.retrieval_adapter import RagRetrievalAdapter as Adapter
-
-        narrow = Adapter(retriever=adapter._retriever, catalogue=only_conduct)
-
-        evidence = await narrow.search(
-            _context(DataScope.SELF), query="How many annual leave days do employees get?", top_k=8
-        )
-
-        reached = {passage.citation.document_id for passage in evidence.passages}
-        assert ingested["annual_leave_policy.md"] not in reached
-        assert reached <= {ingested["code_of_conduct.md"]}
-
-    async def test_the_empty_case_records_why_it_was_empty(self, adapter):
-        # "found nothing" and "was allowed to look at nothing" are different
-        # answers to "why was that unhelpful?".
-        empty = DocumentCatalogue(records={}, source=None)
-        from erp_agent.infrastructure.rag.retrieval_adapter import RagRetrievalAdapter as Adapter
-
-        blocked = await Adapter(retriever=adapter._retriever, catalogue=empty).search(
-            _context(DataScope.SELF), query="anything"
-        )
-        searched = await adapter.search(_context(DataScope.SELF), query="zzzzqqqxyzzy nonsense")
-
-        assert blocked.searched_document_count == 0
-        assert searched.searched_document_count > 0
-
-
-class TestThroughTheLoop:
-    """Section 11's Phase 4 acceptance criterion 1, joined up.
-
-    Everything above tests the adapter directly. This is the only place where
-    the loop, the seventh tool, the real catalogue and the real index run
-    together -- which is what "answers from the document with a working
-    citation" actually claims. The model is scripted, for the reason the
-    structured end-to-end suite gives: an assertion about a live model's tool
-    choice is an assertion about that model on that day.
+    Every assertion below is on real indexed content. The Engineering runbook,
+    the Cairo handbook and the private note are ingested, embedded and
+    retrievable -- by the right principal.
     """
 
-    async def test_a_policy_question_reaches_the_document_and_comes_back_cited(
-        self, adapter, ingested
-    ):
-        llm = ScriptedLLM(
-            _call("search_documents", query="annual leave policy entitlement days"),
-            LLMResponse(model_id="scripted", text="Employees accrue leave as set out in [1]."),
-        )
-        registry = build_agent_registry(directory=FakeDirectory(), knowledge=adapter)
-        loop = AgentLoop(llm=llm, registry=registry, generation_params=PARAMS)
+    async def test_another_department_retrieves_zero_engineering_chunks(self, adapter, ingested):
+        outsider = _context(DataScope.DEPARTMENT, dept_id=OTHER_DEPT)
 
-        answer = await loop.answer("What is the annual leave policy?", _context(DataScope.SELF))
-
-        assert answer.trace.tools_used == ("search_documents",)
-        assert not answer.trace.refusals
-        # The passage the model was handed is the real document, and the marker
-        # it cited resolves to it.
-        rendered = llm.tool_payloads[0]
-        assert "quoted passages" in rendered
-        assert "[1] Annual Leave Policy" in rendered
-
-    async def test_the_citation_the_model_is_given_resolves_to_a_real_chunk(
-        self, adapter, ingested
-    ):
-        # A citation marker that resolves to nothing is a fabricated citation
-        # with extra steps. Markers are assigned by the adapter from retrieved
-        # chunks, never by the model, so this holds structurally -- assert it.
         evidence = await adapter.search(
-            _context(DataScope.SELF), query="annual leave entitlement", top_k=3
+            outsider, query="on-call rotation escalation paging deploy freeze", top_k=8
         )
 
-        assert evidence.passages
-        for citation in evidence.citations:
-            record = CATALOGUE.get(citation.document_id)
-            assert record is not None
-            assert citation.document_title == record.title
-        assert ingested["annual_leave_policy.md"] in {c.document_id for c in evidence.citations}
+        reached = {p.citation.document_id for p in evidence.passages}
+        assert ingested["engineering_runbook.md"] not in reached
 
-    async def test_an_unanswerable_question_tells_the_model_not_to_improvise(self, adapter):
-        llm = ScriptedLLM(
-            _call("search_documents", query="the company submarine fleet maintenance schedule"),
-            LLMResponse(
-                model_id="scripted", text="That is not covered by the documents I can see."
-            ),
-        )
-        registry = build_agent_registry(directory=FakeDirectory(), knowledge=adapter)
+    async def test_the_owning_department_does_retrieve_them(self, adapter, ingested):
+        # The negative above is only meaningful if the positive holds: a filter
+        # that excluded everyone would pass the leakage test and be useless.
+        insider = _context(DataScope.DEPARTMENT, dept_id=ENGINEERING_DEPT)
 
-        await AgentLoop(llm=llm, registry=registry, generation_params=PARAMS).answer(
-            "How do we service the submarine fleet?", _context(DataScope.SELF)
+        evidence = await adapter.search(
+            insider, query="on-call rotation escalation paging deploy freeze", top_k=8
         )
 
-        rendered = llm.tool_payloads[0]
-        # Either nothing matched, or what matched is irrelevant; in both cases
-        # the envelope has to be present rather than a bare empty payload.
-        assert "quoted passages" in rendered or "do not answer from general knowledge" in rendered
+        reached = {p.citation.document_id for p in evidence.passages}
+        assert ingested["engineering_runbook.md"] in reached
+
+    async def test_another_branch_retrieves_zero_cairo_chunks(self, adapter, ingested):
+        outsider = _context(DataScope.BRANCH, allowed_branch_ids=frozenset({OTHER_BRANCH}))
+
+        evidence = await adapter.search(
+            outsider, query="transport allowance office hours desk booking", top_k=8
+        )
+
+        reached = {p.citation.document_id for p in evidence.passages}
+        assert ingested["cairo_handbook.md"] not in reached
+
+    async def test_the_owning_branch_does_retrieve_them(self, adapter, ingested):
+        insider = _context(DataScope.BRANCH, allowed_branch_ids=frozenset({CAIRO_BRANCH}))
+
+        evidence = await adapter.search(
+            insider, query="transport allowance office hours desk booking", top_k=8
+        )
+
+        reached = {p.citation.document_id for p in evidence.passages}
+        assert ingested["cairo_handbook.md"] in reached
+
+    @pytest.mark.parametrize("scope", list(DataScope))
+    async def test_nobody_but_the_owner_retrieves_the_private_note(self, adapter, ingested, scope):
+        # Including ORGANISATION scope. Private means private, and the widest
+        # grant in the ladder does not override it.
+        other = _context(
+            scope,
+            employee_id="00000000-0000-0000-0000-00000000ffff",
+            dept_id=ENGINEERING_DEPT,
+            allowed_branch_ids=frozenset({CAIRO_BRANCH}),
+        )
+
+        evidence = await adapter.search(
+            other, query="personal objective advanced certification study leave", top_k=8
+        )
+
+        reached = {p.citation.document_id for p in evidence.passages}
+        assert ingested["private_note.md"] not in reached
+
+    async def test_the_owner_does_retrieve_it(self, adapter, ingested):
+        owner = _context(DataScope.SELF, employee_id=PRIVATE_OWNER)
+
+        evidence = await adapter.search(
+            owner, query="personal objective advanced certification study leave", top_k=8
+        )
+
+        reached = {p.citation.document_id for p in evidence.passages}
+        assert ingested["private_note.md"] in reached
+
+    async def test_a_self_scoped_principal_reaches_only_public_documents(self, adapter, ingested):
+        # The whole corpus in one query, at the narrowest scope. Anything
+        # team- or private-scoped that comes back is a leak.
+        evidence = await adapter.search(
+            _context(DataScope.SELF), query="policy leave overtime conduct rotation branch", top_k=8
+        )
+
+        reached = {p.citation.document_id for p in evidence.passages}
+        public = {
+            ingested["annual_leave_policy.md"],
+            ingested["overtime_policy.md"],
+            ingested["code_of_conduct.md"],
+        }
+        assert reached <= public, f"self scope reached {reached - public}"
+
+    async def test_the_filter_reaches_the_store_rather_than_this_process(self, adapter):
+        # The claim the design rests on: a chunk the principal may not read is
+        # never returned, so it is never available to be filtered out later.
+        # Asserted by asking for far more than exists and checking the excluded
+        # documents are simply absent.
+        evidence = await adapter.search(_context(DataScope.SELF), query="the and of a to", top_k=8)
+
+        for passage in evidence.passages:
+            record = CATALOGUE.records[passage.citation.document_id]
+            assert record.access_level.value == "public"

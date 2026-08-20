@@ -54,6 +54,13 @@ role: ## (Re-)apply the read-only role to the running mock database
 	docker exec mock-hr-postgres psql -U hr_user -d mock_hr \
 		-v ON_ERROR_STOP=1 -f /database/schema/hr/10_readonly_role.sql
 
+reingest: ## Re-ingest the test corpus with Phase 6 security metadata
+	$(UV) python scripts/reingest_documents.py \
+		--manifest tests/fixtures/documents.yaml \
+		--directory tests/fixtures/documents \
+		--module HR \
+		--record tests/fixtures/documents/ingested.json
+
 clean: ## Remove caches and build artefacts
 	rm -rf .pytest_cache .mypy_cache .ruff_cache .import_linter_cache htmlcov .coverage dist build
 	find . -type d -name __pycache__ -prune -exec rm -rf {} +

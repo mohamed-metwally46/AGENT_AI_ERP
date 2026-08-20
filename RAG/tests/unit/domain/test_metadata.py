@@ -17,6 +17,7 @@ from rag.domain.models import (
     ChunkMetadata,
     DocumentType,
     MetadataField,
+    SecurityTags,
 )
 
 pytestmark = pytest.mark.unit
@@ -138,3 +139,84 @@ class TestFilterableFields:
 class TestDocumentType:
     def test_the_four_supported_formats_exist(self):
         assert {t.value for t in DocumentType} == {"PDF", "DOCX", "TXT", "MARKDOWN"}
+
+
+class TestSecurityMetadata:
+    """The six fields that let a permission filter run inside the store.
+
+    Added in the ERP agent's Phase 6 (Plan.md section 7.3), and named after the
+    ERP's own ``project_documents`` columns rather than a parallel vocabulary.
+    They are optional because a deployment with no permission model must be able
+    to ingest exactly as before -- but optional is not the same as harmless, and
+    the last test here is about what ``None`` means to a filter.
+    """
+
+    @pytest.mark.parametrize(
+        "field",
+        [
+            MetadataField.DEPARTMENT,
+            MetadataField.BRANCH,
+            MetadataField.MODULE,
+            MetadataField.OWNER_ID,
+            MetadataField.ACCESS_LEVEL,
+            MetadataField.DOCUMENT_CATEGORY,
+        ],
+    )
+    def test_each_security_field_is_filterable(self, field):
+        # A permission predicate that cannot be pushed into the store becomes a
+        # post-filter, and by then the chunk has already been read.
+        assert field in FILTERABLE_FIELDS
+
+    def test_they_default_to_none_so_existing_callers_are_unaffected(self):
+        metadata = _metadata()
+
+        assert metadata.access_level is None
+        assert metadata.department is None
+        assert metadata.branch is None
+        assert metadata.module is None
+        assert metadata.owner_id is None
+        assert metadata.document_category is None
+
+    def test_they_are_carried_when_supplied(self):
+        metadata = _metadata(
+            department="dept-1",
+            branch="branch-1",
+            module="HR",
+            owner_id="emp-9",
+            access_level="team",
+            document_category="handbook",
+        )
+
+        assert metadata.department == "dept-1"
+        assert metadata.branch == "branch-1"
+        assert metadata.module == "HR"
+        assert metadata.owner_id == "emp-9"
+        assert metadata.access_level == "team"
+        assert metadata.document_category == "handbook"
+
+    def test_an_absent_access_level_is_not_a_permissive_default(self):
+        # `None` means "nobody classified this", which a filter naming an
+        # audience will not match. The alternative -- treating absence as
+        # public -- would make every untagged document readable by everyone,
+        # which is the failure this whole field set exists to prevent.
+        assert _metadata().access_level is None
+        assert _metadata().access_level != "public"
+
+
+class TestSecurityTags:
+    def test_every_tag_is_optional(self):
+        assert SecurityTags() == SecurityTags(
+            department=None,
+            branch=None,
+            module=None,
+            owner_id=None,
+            access_level=None,
+            document_category=None,
+        )
+
+    def test_it_names_the_same_fields_as_the_metadata_it_stamps(self):
+        # If the two drifted, a tag would be accepted at ingestion and silently
+        # never written.
+        attributes = {f.name for f in dataclasses.fields(ChunkMetadata)}
+
+        assert {f.name for f in dataclasses.fields(SecurityTags)} <= attributes

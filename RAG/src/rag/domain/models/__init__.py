@@ -36,6 +36,7 @@ from rag.domain.models.metadata import (
     ChunkMetadata,
     DocumentType,
     MetadataField,
+    SecurityTags,
 )
 from rag.domain.models.query import Query, RetrievalRequest
 from rag.domain.models.tools import LLMMessage, ToolCall, ToolDefinition, ToolResult
@@ -77,6 +78,7 @@ __all__ = [
     "Role",
     "ScoreSource",
     "ScoredChunk",
+    "SecurityTags",
     "SparseVector",
     "TokenUsage",
     "ToolCall",

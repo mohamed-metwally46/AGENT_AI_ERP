@@ -23,6 +23,7 @@ __all__ = [
     "ChunkMetadata",
     "DocumentType",
     "MetadataField",
+    "SecurityTags",
 ]
 
 
@@ -70,6 +71,17 @@ class MetadataField(StrEnum):
     CHUNKING_STRATEGY = "chunking_strategy"
     EMBEDDING_MODEL_ID = "embedding_model_id"
 
+    # Security metadata. Assigned at ingestion, never inferred from content, and
+    # named after the ERP's own `project_documents` columns rather than a
+    # parallel vocabulary. Filterable, because their whole purpose is to let a
+    # permission predicate run in the store instead of after it.
+    DEPARTMENT = "department"
+    BRANCH = "branch"
+    MODULE = "module"
+    OWNER_ID = "owner_id"
+    ACCESS_LEVEL = "access_level"
+    DOCUMENT_CATEGORY = "document_category"
+
 
 #: Fields that may appear in a retrieval filter and therefore receive a payload
 #: index. The excluded fields are internal provenance and offsets: useful when
@@ -91,8 +103,44 @@ FILTERABLE_FIELDS: frozenset[MetadataField] = frozenset(
         MetadataField.INGESTED_AT,
         MetadataField.LANGUAGE,
         MetadataField.CHUNK_INDEX,
+        # A permission predicate that cannot be pushed into the store is not a
+        # permission predicate: it becomes a post-filter, and by then the chunk
+        # has been read. These six carry the index that makes filtering happen
+        # during retrieval.
+        MetadataField.DEPARTMENT,
+        MetadataField.BRANCH,
+        MetadataField.MODULE,
+        MetadataField.OWNER_ID,
+        MetadataField.ACCESS_LEVEL,
+        MetadataField.DOCUMENT_CATEGORY,
     }
 )
+
+
+@dataclass(frozen=True, slots=True)
+class SecurityTags:
+    """Who a document is for, decided at ingestion.
+
+    A caller-supplied classification, never inferred from the document's own
+    text or properties: an audience guessed from prose is a guess, and a wrong
+    guess here is a disclosure. Every field is optional so a deployment with no
+    permission model can ingest exactly as before.
+
+    Attributes:
+        department: Owning department, for a department-scoped document.
+        branch: Owning branch, for a branch-scoped document.
+        module: Functional area the document belongs to.
+        owner_id: The individual a private document belongs to.
+        access_level: Who the document is for.
+        document_category: Classification within the module.
+    """
+
+    department: str | None = None
+    branch: str | None = None
+    module: str | None = None
+    owner_id: str | None = None
+    access_level: str | None = None
+    document_category: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,6 +172,20 @@ class ChunkMetadata:
         created_at: The document's own creation date, distinct from
             :attr:`ingested_at`.
         language: Detected ISO 639-1 language code.
+        department: Owning department, for documents scoped to one.
+        branch: Owning branch, for documents scoped to one.
+        module: Which functional area the document belongs to.
+        owner_id: The individual a private document belongs to.
+        access_level: Who the document is for -- mirrors
+            ``project_documents.access_level``.
+        document_category: The document's classification within its module.
+
+    The six security fields are ``None`` when a document was ingested without
+    them, and that is not a neutral state: a filter that requires a stated
+    audience will not match an unstated one, so an untagged chunk is invisible
+    rather than public. That is the correct default -- a document nobody
+    classified has no known audience -- and it is why adding these fields
+    requires re-ingesting anything that must stay reachable.
     """
 
     document_id: str
@@ -147,6 +209,13 @@ class ChunkMetadata:
     title: str | None = None
     created_at: datetime | None = None
     language: str | None = None
+
+    department: str | None = None
+    branch: str | None = None
+    module: str | None = None
+    owner_id: str | None = None
+    access_level: str | None = None
+    document_category: str | None = None
 
     def __post_init__(self) -> None:
         """Validate structural invariants that no extractor may violate."""

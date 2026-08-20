@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from typing import Protocol
@@ -16,9 +15,10 @@ from rag.domain.models import (
     DocumentProperties,
     DocumentType,
     RawDocument,
+    SecurityTags,
     SparseVector,
 )
-from rag.domain.policies import derive_chunk_id
+from rag.domain.policies import derive_chunk_id, derive_document_id
 from rag.domain.ports import ChunkingStrategy, DocumentParser, Embedder, VectorStore
 
 __all__ = ["IngestDocumentUseCase"]
@@ -121,7 +121,14 @@ class IngestDocumentUseCase:
         self._clock = clock
         self._sparse_encoder = sparse_encoder
 
-    async def execute(self, filename: str, content: bytes) -> Document:
+    async def execute(
+        self,
+        filename: str,
+        content: bytes,
+        security: SecurityTags | None = None,
+        *,
+        force: bool = False,
+    ) -> Document:
         """Ingest an uploaded file.
 
         Args:
@@ -129,6 +136,17 @@ class IngestDocumentUseCase:
             content: The uploaded bytes. These are what gets indexed -- the
                 prototype's central defect was reading a hardcoded folder
                 instead.
+            security: Who the document is for. Stamped onto every chunk so a
+                permission filter can run inside the store. Optional, and
+                ``None`` means untagged rather than public -- a filter that
+                names an audience will not match a chunk that has none.
+            force: Re-index even when the content is byte-identical to what is
+                already stored. Needed whenever something *other than the
+                content* must change on the chunks -- the security tags above
+                are the case that motivated it. Without this, a re-ingest that
+                exists purely to stamp metadata reports success and writes
+                nothing, which is the worst of both outcomes: the caller
+                believes the index was updated and it was not.
 
         Returns:
             A record of what was indexed.
@@ -141,10 +159,10 @@ class IngestDocumentUseCase:
             VectorStoreError: If the write fails.
         """
         raw = self._loader.load(filename, content)
-        document_id = self._document_id(filename)
+        document_id = derive_document_id(filename)
 
         previous = self._catalog.get(document_id)
-        if previous is not None and previous.content_hash == raw.content_hash:
+        if not force and previous is not None and previous.content_hash == raw.content_hash:
             # Identical content: nothing to re-embed and nothing to re-index.
             return previous
 
@@ -160,7 +178,7 @@ class IngestDocumentUseCase:
             chunking.record(chunks=len(candidates))
 
         chunks = self._build_chunks(
-            candidates, raw, parsed.properties, document_id, version, ingested_at
+            candidates, raw, parsed.properties, document_id, version, ingested_at, security
         )
 
         if chunks:
@@ -206,16 +224,6 @@ class IngestDocumentUseCase:
             )
         return document
 
-    @staticmethod
-    def _document_id(filename: str) -> str:
-        """Derive a document id from its name.
-
-        Keyed on the name rather than the content, so uploading a corrected
-        version of ``report.pdf`` replaces the old one instead of leaving two
-        copies to compete in retrieval.
-        """
-        return hashlib.sha256(filename.encode()).hexdigest()[:32]
-
     def _build_chunks(
         self,
         candidates: Sequence[ChunkCandidate],
@@ -224,18 +232,22 @@ class IngestDocumentUseCase:
         document_id: str,
         version: int,
         ingested_at: datetime,
+        security: SecurityTags | None = None,
     ) -> list[Chunk]:
-        """Stamp identity and provenance onto chunk candidates.
+        """Stamp identity, provenance and audience onto chunk candidates.
 
         The chunker chose the boundaries; this decides what each chunk *is*.
         Keeping the two apart is what lets a chunking strategy be tested with no
         document id, no clock and no configuration.
 
-        Document-level properties -- author, title, creation date -- are copied
-        onto every chunk. Denormalising them is what makes them filterable at
-        retrieval time: a filter runs against the chunk payload, so an author
-        held only on the document would be unusable in a search.
+        Document-level properties -- author, title, creation date, and who the
+        document is for -- are copied onto every chunk. Denormalising them is
+        what makes them filterable at retrieval time: a filter runs against the
+        chunk payload, so an audience held only on the document would be
+        unusable in a search, which would mean permission filtering could only
+        happen after the chunks came back.
         """
+        tags = security if security is not None else SecurityTags()
         chunks: list[Chunk] = []
         for index, candidate in enumerate(candidates):
             chunks.append(
@@ -262,6 +274,12 @@ class IngestDocumentUseCase:
                         title=properties.title,
                         created_at=properties.created_at,
                         language=properties.language,
+                        department=tags.department,
+                        branch=tags.branch,
+                        module=tags.module,
+                        owner_id=tags.owner_id,
+                        access_level=tags.access_level,
+                        document_category=tags.document_category,
                     ),
                 )
             )

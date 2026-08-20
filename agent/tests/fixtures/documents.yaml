@@ -4,6 +4,12 @@
 # these entries exercise every access level, including the team- and
 # private-scoped cases the dev manifest has no need for.
 #
+# Since Phase 6 this is an *ingestion* manifest: it decides the audience stamped
+# onto every chunk of each document, and every entry has a real file beside it in
+# `documents/`. Each `document_id` is what `rag.domain.policies.derive_document_id`
+# produces for that filename -- not a name someone chose -- because that is the id
+# the chunks will carry.
+#
 # Runtime code must never read this file.
 
 schema_version: 1
@@ -11,33 +17,33 @@ schema_version: 1
 documents:
   # Company policy: readable by anyone authenticated. An employee who cannot
   # read the leave policy cannot check their own leave.
-  - document_id: "47a9adb9952e647654ade17ec397b664"
+  - document_id: "47a9adb9952e647654ade17ec397b664" # annual_leave_policy.md
     title: "Annual Leave Policy"
     access_level: public
 
-  - document_id: "dc1dca3425232f7d80796aa557165d20"
+  - document_id: "dc1dca3425232f7d80796aa557165d20" # overtime_policy.md
     title: "Overtime Policy"
     access_level: public
 
-  - document_id: "fa698b8cfb8bf9319712cd7801032f48"
+  - document_id: "fa698b8cfb8bf9319712cd7801032f48" # code_of_conduct.md
     title: "Code of Conduct"
     access_level: public
 
   # Department-scoped: only a DEPARTMENT-scoped principal in that department,
   # or ORGANISATION scope, may read it.
-  - document_id: "doc-engineering-runbook"
+  - document_id: "efd83eb515fa50e9c9a960523b76ce50" # engineering_runbook.md
     title: "Engineering On-Call Runbook"
     access_level: team
     department: "00000000-0000-0000-0000-0000000000d9"
 
   # Branch-scoped.
-  - document_id: "doc-cairo-handbook"
+  - document_id: "474878ef26e7e62866e64fbcbbbfc687" # cairo_handbook.md
     title: "Cairo Branch Handbook"
     access_level: team
     branch: "00000000-0000-0000-0000-0000000000b1"
 
   # Private: only the named owner.
-  - document_id: "doc-private-note"
+  - document_id: "032596a6bacc03ff6d3450454f56810c" # private_note.md
     title: "Private Note"
     access_level: private
     owner_employee_number: "00000000-0000-0000-0000-000000000005"

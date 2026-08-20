@@ -426,6 +426,12 @@ def _to_payload(chunk: Chunk) -> dict[str, Any]:
         "title": metadata.title,
         "created_at": metadata.created_at.isoformat() if metadata.created_at else None,
         "language": metadata.language,
+        "department": metadata.department,
+        "branch": metadata.branch,
+        "module": metadata.module,
+        "owner_id": metadata.owner_id,
+        "access_level": metadata.access_level,
+        "document_category": metadata.document_category,
     }
     return payload
 
@@ -457,5 +463,14 @@ def _from_payload(payload: dict[str, Any]) -> Chunk:
             title=payload.get("title"),
             created_at=datetime.fromisoformat(created_at) if created_at else None,
             language=payload.get("language"),
+            # `.get` rather than `[...]`: chunks written before the security
+            # fields existed have no such keys, and a KeyError here would make
+            # a pre-existing index unreadable rather than merely unfilterable.
+            department=payload.get("department"),
+            branch=payload.get("branch"),
+            module=payload.get("module"),
+            owner_id=payload.get("owner_id"),
+            access_level=payload.get("access_level"),
+            document_category=payload.get("document_category"),
         ),
     )

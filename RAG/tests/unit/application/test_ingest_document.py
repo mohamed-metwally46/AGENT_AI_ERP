@@ -14,7 +14,7 @@ import pytest
 
 from rag.application.use_cases import IngestDocumentUseCase
 from rag.domain.errors import DocumentTooLargeError, UnsupportedFormatError
-from rag.domain.models import DocumentType
+from rag.domain.models import DocumentType, SecurityTags
 from rag.infrastructure.chunking import RecursiveChunker
 from rag.infrastructure.documents import DocumentLoader, ParserRegistry, TxtParser
 from rag.infrastructure.storage import DocumentCatalog, UploadStore
@@ -172,6 +172,84 @@ class TestReIngestion:
         second = await use_case.execute("notes.txt", _SAMPLE.encode())
 
         assert second.ingest_version == first.ingest_version
+
+
+class TestSecurityTags:
+    """Who a document is for, stamped at ingestion rather than inferred."""
+
+    async def test_the_tags_reach_every_chunk(self, tmp_path):
+        # Denormalised onto each chunk on purpose: a filter runs against the
+        # chunk payload, so an audience held only on the document would be
+        # unusable at retrieval and the permission check would have to happen
+        # after the chunks came back.
+        use_case, store, _ = _use_case(tmp_path)
+
+        await use_case.execute(
+            "handbook.txt",
+            _SAMPLE.encode(),
+            SecurityTags(access_level="team", department="dept-1", module="HR"),
+        )
+
+        stored = [store._chunks[cid].metadata for cid in store.chunk_ids()]
+        assert stored
+        assert all(m.access_level == "team" for m in stored)
+        assert all(m.department == "dept-1" for m in stored)
+        assert all(m.module == "HR" for m in stored)
+
+    async def test_omitting_them_leaves_every_chunk_untagged(self, tmp_path):
+        use_case, store, _ = _use_case(tmp_path)
+
+        await use_case.execute("handbook.txt", _SAMPLE.encode())
+
+        stored = [store._chunks[cid].metadata for cid in store.chunk_ids()]
+        assert stored
+        assert all(m.access_level is None for m in stored)
+
+
+class TestForcingAReIngest:
+    """A metadata-only re-ingest has to actually write.
+
+    The content hash makes an unchanged re-upload free, which is right for
+    content and wrong for everything else. Adding an audience to an existing
+    corpus changes no bytes, so without `force` the re-ingest reports success
+    and writes nothing -- the caller believes the index was updated and it was
+    not. This was found by running the real re-ingest, not by reading the code.
+    """
+
+    async def test_forcing_re_embeds_identical_content(self, tmp_path):
+        use_case, _, embedder = _use_case(tmp_path)
+
+        await use_case.execute("notes.txt", _SAMPLE.encode())
+        calls_after_first = embedder.embed_calls
+        await use_case.execute("notes.txt", _SAMPLE.encode(), force=True)
+
+        assert embedder.embed_calls > calls_after_first
+
+    async def test_forcing_applies_tags_that_were_not_there_before(self, tmp_path):
+        use_case, store, _ = _use_case(tmp_path)
+
+        await use_case.execute("notes.txt", _SAMPLE.encode())
+        untagged = [store._chunks[cid].metadata.access_level for cid in store.chunk_ids()]
+
+        await use_case.execute(
+            "notes.txt", _SAMPLE.encode(), SecurityTags(access_level="public"), force=True
+        )
+        tagged = [store._chunks[cid].metadata.access_level for cid in store.chunk_ids()]
+
+        assert all(level is None for level in untagged)
+        assert tagged
+        assert all(level == "public" for level in tagged)
+
+    async def test_not_forcing_still_skips_identical_content(self, tmp_path):
+        # The default is unchanged: forcing is opt-in, so ordinary re-uploads
+        # stay free.
+        use_case, _, embedder = _use_case(tmp_path)
+
+        await use_case.execute("notes.txt", _SAMPLE.encode())
+        calls_after_first = embedder.embed_calls
+        await use_case.execute("notes.txt", _SAMPLE.encode())
+
+        assert embedder.embed_calls == calls_after_first
 
 
 class TestGuards:

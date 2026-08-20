@@ -7,7 +7,7 @@ Because these are pure functions over domain types, they are the densest and
 cheapest tests in the codebase -- no mocks, no setup, exhaustive edge cases.
 """
 
-from rag.domain.policies.chunk_identity import derive_chunk_id
+from rag.domain.policies.chunk_identity import derive_chunk_id, derive_document_id
 from rag.domain.policies.citation_assembly import (
     assemble_citations,
     extract_citation_markers,
@@ -27,6 +27,7 @@ __all__ = [
     "assemble_citations",
     "deduplicate_chunks",
     "derive_chunk_id",
+    "derive_document_id",
     "extract_citation_markers",
     "order_for_attention",
     "reciprocal_rank_fusion",

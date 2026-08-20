@@ -190,16 +190,38 @@ class TestGuardsAreRealisticallyWired:
         assert _violations("core", {"erp_agent.domain"}) != []
 
 
-class TestRagIsUntouched:
-    """Task 1.1 acceptance criterion 5: ``git diff --stat RAG/`` is empty.
+#: The only RAG files Phase 6 is permitted to touch (Plan.md section 11, Phase 6
+#: "Files"). RAG is modified exactly once in the whole roadmap, and the value of
+#: saying so is lost if the change is allowed to spread afterwards.
+PHASE_6_RAG_FILES = frozenset(
+    {
+        "RAG/src/rag/domain/models/metadata.py",
+        "RAG/src/rag/domain/models/__init__.py",
+        "RAG/src/rag/domain/policies/chunk_identity.py",
+        "RAG/src/rag/domain/policies/__init__.py",
+        "RAG/src/rag/application/use_cases/ingest_document.py",
+        "RAG/src/rag/infrastructure/vector_store/qdrant_store.py",
+    }
+)
 
-    Phases 1 to 5 require zero changes to RAG (Plan.md section 7.3). The agent
-    owns its own tool registry and loop precisely so that stays true.
+
+class TestTheRagChangeStayedWhereItWasAllowed:
+    """Phase 6 is the one phase that modifies RAG, and only these files.
+
+    Through Phase 5 this asserted ``git status -- RAG`` was empty. That guard
+    expired the moment Phase 6 landed, so it was replaced rather than deleted:
+    what matters now is not that RAG is untouched but that the touch stayed
+    inside the six files the plan named, and that it stayed additive -- which
+    ``tests/unit/infrastructure/test_rag_security_filter`` asserts field by
+    field.
+
+    Deleting the guard instead would have made "RAG is touched exactly once"
+    an assertion nobody checks.
     """
 
-    def test_the_rag_package_has_no_uncommitted_changes(self):
+    def _changed_rag_files(self) -> list[str] | None:
         if not (REPO_ROOT / ".git").exists():
-            pytest.skip("not a git checkout")
+            return None
 
         try:
             result = subprocess.run(
@@ -210,14 +232,51 @@ class TestRagIsUntouched:
                 timeout=30,
                 check=False,
             )
-        except (OSError, subprocess.SubprocessError) as exc:  # pragma: no cover
-            pytest.skip(f"git is unavailable: {exc}")
+        except (OSError, subprocess.SubprocessError):  # pragma: no cover
+            return None
 
         if result.returncode != 0:  # pragma: no cover
-            pytest.skip(f"git status failed: {result.stderr.strip()}")
+            return None
 
-        changed = [line for line in result.stdout.splitlines() if line.strip()]
-        assert changed == [], "RAG/ must not be modified before Phase 6"
+        # Porcelain lines are "XY path"; a rename is "XY old -> new".
+        return [
+            line[3:].split(" -> ")[-1].strip().strip('"')
+            for line in result.stdout.splitlines()
+            if line.strip()
+        ]
+
+    def test_no_rag_file_outside_the_permitted_set_is_modified(self):
+        changed = self._changed_rag_files()
+        if changed is None:
+            pytest.skip("git is unavailable or this is not a checkout")
+
+        source = [path for path in changed if path.startswith("RAG/src/")]
+
+        assert set(source) <= PHASE_6_RAG_FILES, (
+            f"Phase 6 may only modify {sorted(PHASE_6_RAG_FILES)}; "
+            f"unexpected: {sorted(set(source) - PHASE_6_RAG_FILES)}"
+        )
+
+    def test_no_rag_file_is_deleted(self):
+        changed = self._changed_rag_files()
+        if changed is None:
+            pytest.skip("git is unavailable or this is not a checkout")
+
+        try:
+            result = subprocess.run(
+                ["git", "status", "--porcelain", "--", "RAG"],  # noqa: S607
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):  # pragma: no cover
+            pytest.skip("git is unavailable")
+
+        deleted = [line for line in result.stdout.splitlines() if line.startswith(("D", " D"))]
+
+        assert deleted == [], f"the RAG change must be additive; deleted: {deleted}"
 
 
 class TestRuntimeCodeIsIndependentOfTheTestSuite:

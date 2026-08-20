@@ -11,6 +11,7 @@ and a real database does not.
 
 from __future__ import annotations
 
+import dataclasses
 import uuid
 from datetime import UTC, datetime
 
@@ -142,6 +143,66 @@ class TestRoundTrip:
         assert metadata.page_number == 4
         assert metadata.section == "3.2 Revenue"
         assert metadata.ingested_at == _NOW
+
+    async def test_security_metadata_survives_the_round_trip(self, store):
+        # The permission filter runs against these payload keys. If any of them
+        # were dropped in the mapping, the filter would match nothing and the
+        # whole corpus would go silently unreadable.
+        tagged = _chunk("a")
+        tagged = Chunk(
+            text=tagged.text,
+            metadata=dataclasses.replace(
+                tagged.metadata,
+                department="dept-1",
+                branch="branch-1",
+                module="HR",
+                owner_id="emp-9",
+                access_level="team",
+                document_category="handbook",
+            ),
+        )
+        await store.upsert([tagged], [(1.0, 0.0, 0.0, 0.0)])
+
+        metadata = (await store.search_dense((1.0, 0.0, 0.0, 0.0), top_k=5))[0].chunk.metadata
+
+        assert metadata.department == "dept-1"
+        assert metadata.branch == "branch-1"
+        assert metadata.module == "HR"
+        assert metadata.owner_id == "emp-9"
+        assert metadata.access_level == "team"
+        assert metadata.document_category == "handbook"
+
+    async def test_an_untagged_chunk_round_trips_as_none_not_missing(self, store):
+        # `None` is what the filter must see: a permission clause naming an
+        # audience will not match it. A KeyError here would instead make an
+        # untagged chunk unreadable in a way that looks like a crash.
+        await store.upsert([_chunk("a")], [(1.0, 0.0, 0.0, 0.0)])
+
+        metadata = (await store.search_dense((1.0, 0.0, 0.0, 0.0), top_k=5))[0].chunk.metadata
+
+        assert metadata.access_level is None
+        assert metadata.department is None
+        assert metadata.owner_id is None
+
+    async def test_a_filter_on_access_level_excludes_untagged_chunks(self, store):
+        # The property the whole permission model rests on, asserted against a
+        # real Qdrant rather than against the in-memory double.
+        public = Chunk(
+            text="Everyone may read this.",
+            metadata=dataclasses.replace(_chunk("public").metadata, access_level="public"),
+        )
+        await store.upsert(
+            [public, _chunk("untagged", text="Nobody classified this.")],
+            [(1.0, 0.0, 0.0, 0.0), (1.0, 0.0, 0.0, 0.0)],
+        )
+
+        results = await store.search_dense(
+            (1.0, 0.0, 0.0, 0.0),
+            top_k=10,
+            filters=FieldFilter(MetadataField.ACCESS_LEVEL, FilterOperator.EQ, "public"),
+        )
+
+        assert [r.chunk_id for r in results] == ["public"]
 
     async def test_an_absent_page_number_round_trips_as_none(self, store):
         await store.upsert([_chunk("a", page=None)], [(1.0, 0.0, 0.0, 0.0)])
@@ -288,6 +349,21 @@ class TestCollectionCompatibility:
 
         indexed = set(info.payload_schema or {})
         assert {"document_id", "page_number", "author", "ingest_version"} <= indexed
+
+    async def test_the_security_fields_are_indexed_too(self, store):
+        # Phase 6 acceptance criterion 1. Without the index, a permission filter
+        # is a full scan of the whole corpus on every question.
+        info = await store._client.get_collection((await store.collection_info()).name)
+
+        indexed = set(info.payload_schema or {})
+        assert {
+            "department",
+            "branch",
+            "module",
+            "owner_id",
+            "access_level",
+            "document_category",
+        } <= indexed
 
     async def test_non_filterable_fields_are_not_indexed(self, store):
         # Indexing character offsets would cost memory for no query benefit.

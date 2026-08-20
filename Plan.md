@@ -19,10 +19,10 @@ security requirements and the future ERP integration strategy live here.
 
 | | |
 |---|---|
-| **CURRENT PHASE** | Phase 5 — Hybrid Q&A |
-| **CURRENT TASK** | *(none — Phase 5 complete, awaiting go-ahead for Phase 6)* |
-| **NEXT TASK** | **Phase 6 — Security Hardening + RAG Metadata Filtering** |
-| **COMPLETED TASKS** | Phase 0 (0.1–0.3); Phase 1 (1.1); Phase 2 (2.1–2.3); Phase 3; Phase 4; Phase 5 |
+| **CURRENT PHASE** | Phase 6 — Security Hardening + RAG Metadata Filtering |
+| **CURRENT TASK** | *(none — Phase 6 complete except the S2-blocked permission map; awaiting go-ahead for Phase 7)* |
+| **NEXT TASK** | **Phase 7 — API Layer** |
+| **COMPLETED TASKS** | Phase 0 (0.1–0.3); Phase 1 (1.1); Phase 2 (2.1–2.3); Phase 3; Phase 4; Phase 5; Phase 6 |
 
 ### Completed
 
@@ -38,6 +38,7 @@ security requirements and the future ERP integration strategy live here.
 | 3 | Agent Core — static tool registry, bounded loop, typed trace, LLM adapter over RAG's port; 558 tests | 2026-08-13 |
 | 4 | RAG Adapter — `KnowledgeBase` port, document catalogue, retrieval-time security filter (gap G3 interim), `search_documents` as the seventh tool; 609 tests | 2026-08-20 |
 | 5 | Hybrid Q&A — grounding policy (run-wide markers, invented markers stripped), multi-source assembly in the loop, prose-vs-records conflict surfacing, §5.4 prompt contract; 693 tests | 2026-08-20 |
+| 6 | Security Hardening — gap G3 closed additively in RAG (6 indexed security fields), per-chunk permission predicate, tagged ingestion path, reproducible re-ingest; permission map blocked on gap S2 | 2026-08-20 |
 
 ### Phase ledger
 
@@ -49,8 +50,8 @@ security requirements and the future ERP integration strategy live here.
 | 3 | Agent Core — Tool Registry, Loop, LLM Abstraction | ✅ Complete |
 | 4 | RAG Adapter — Document Q&A | ✅ Complete |
 | 5 | Hybrid Q&A | ✅ Complete |
-| 6 | Security Hardening + RAG Metadata Filtering | ⬜ Next |
-| 7 | API Layer | ⬜ |
+| 6 | Security Hardening + RAG Metadata Filtering | ✅ Complete (permission map blocked on S2) |
+| 7 | API Layer | ⬜ Next |
 | 8 | Evaluation Layer | ⬜ |
 | 9 | ERP Integration Readiness | ⬜ |
 
@@ -185,7 +186,7 @@ Verified by reading the source, not assumed:
 |---|---|---|
 | G1 | The tool executor is hard-wired to exactly one tool | `application/tools/executor.py:25` — `if call.name != self._search.definition.name` |
 | G2 | The agent loop advertises a hard-coded tool tuple | `application/use_cases/agentic_answer.py:77` — `(SEARCH_DOCUMENTS_TOOL,)` |
-| G3 | **No security metadata on chunks** | `MetadataField` has 20 members; none is department, branch, module, owner or access level. `FILTERABLE_FIELDS` therefore cannot express a permission filter |
+| G3 | ~~**No security metadata on chunks**~~ **CLOSED in Phase 6** | Was: `MetadataField` has 20 members; none is department, branch, module, owner or access level. Now 26, with all six security fields in `FILTERABLE_FIELDS` and Qdrant payload indexes |
 | G4 | No security-context concept | The only scoping primitive is `allowed_document_ids: frozenset[str]` |
 | G5 | Only two LLM providers | `config/enums.py` — `LLMProvider` is `{openrouter, gemini}`. §21 requires Ollama |
 | G6 | Tool calling is OpenRouter-only | `LLMClient.respond()` raises by default; the Gemini adapter does not override it |
@@ -782,6 +783,17 @@ Phase 6, permission scoping uses the `allowed_document_ids` parameter that the R
 already supports — computed by the security layer, not by the model. That is why
 Phases 1–5 require **zero** changes to RAG.
 
+**Done (2026-08-20).** All six fields exist, are filterable and are indexed. Two
+things the plan did not anticipate came out of doing it:
+
+- `derive_document_id` had to move from inside `IngestDocumentUseCase` into
+  `domain/policies`, because anything that must associate an audience with a
+  document *before* ingesting it needs to know the id in advance.
+- `execute` needed a `force` flag. It skips a document whose content hash is
+  unchanged — correct for content, wrong for a metadata-only migration, which
+  changes no bytes by definition. Without it the re-ingest reported success and
+  wrote nothing.
+
 ---
 
 ## 8. SECURITY ARCHITECTURE
@@ -858,8 +870,10 @@ leak one. Post-hoc filtering of a generated answer is rejected: by then the mode
 has already been conditioned on the restricted text.
 
 - **Phase 4–5:** scope via `allowed_document_ids`, computed server-side.
-- **Phase 6:** scope via metadata predicates on `department` / `branch` /
-  `access_level` / `owner_id`, mirroring `project_documents`.
+- **Phase 6 (done):** scope via metadata predicates on `department` / `branch` /
+  `access_level` / `owner_id`, mirroring `project_documents`. One disjunction,
+  one clause per way the principal is entitled to reach a chunk, every clause
+  pinning `access_level` — so a chunk nobody classified matches none of them.
 
 ### 8.5 Gaps in the documented security model
 
@@ -1230,7 +1244,53 @@ not silently resolved.
 
 ---
 
-### Phase 6 — Security Hardening + RAG Metadata Filtering
+### Phase 6 — Security Hardening + RAG Metadata Filtering ✅ COMPLETE (one part blocked)
+
+**Delivered (2026-08-20)** The one RAG change this plan permits, additively:
+six new `MetadataField` members (`department`, `branch`, `module`, `owner_id`,
+`access_level`, `document_category`), matching optional `ChunkMetadata` fields,
+all six in `FILTERABLE_FIELDS` and therefore Qdrant-indexed; a `SecurityTags`
+value object; `IngestDocumentUseCase.execute(..., security=, force=)`; and
+`derive_document_id` lifted out of that use case into `domain/policies` so a
+caller can know a document's id before ingesting it.
+
+Agent side: `security_filter.retrieval_filter` now builds a disjunction over the
+chunk's own tags instead of a `document_id` membership test, so the permission
+predicate runs **inside the store, per chunk**. `CatalogueIngestor` stamps the
+audience the manifest declares and refuses any file the manifest does not
+describe. `scripts/reingest_documents.py` (and `make reingest`) is the
+reproducible re-ingest.
+
+**Verified** Cross-department leakage measured against a live index holding six
+tagged documents and two deliberately untagged ones: a `DEPARTMENT`-scoped
+principal in another department retrieves zero Engineering chunks, another
+branch retrieves zero Cairo chunks, and no scope — including `ORGANISATION` —
+reaches the private note or either untagged document. Each negative has a
+positive control, because a filter that excluded everyone would pass a leakage
+test and be useless.
+
+**Found by running it, not by reading it** The first real re-ingest silently
+skipped three of six documents: `IngestDocumentUseCase` short-circuits when the
+content hash is unchanged, which is right for content and wrong for a
+metadata-only migration. It reported success and wrote nothing. Hence `force`,
+which `CatalogueIngestor` always passes.
+
+**Semantic shift, stated rather than buried** "Uncatalogued documents are
+invisible" now means *untagged at ingestion*, not *absent from the agent's
+manifest*. The manifest decides a document's audience when it is ingested; after
+that the chunk's own tags are the ACL. The guarantee holds for the case it was
+written about — a document nobody classified is readable by nobody — but a
+document ingested with tags and later dropped from the manifest would remain
+retrievable, where before it would not. That is the intended consequence of
+moving enforcement into the store.
+
+**Blocked** `infrastructure/security/permission_map.py` is **not built**. It
+depends on gap S2 — `permissions.resource` is not enumerated anywhere — and
+section 8.5 is explicit that these must be resolved with the ERP owners and that
+the plan does not invent answers. Inventing a resource vocabulary here would
+produce a mapping that looks authoritative, cannot be validated against anything
+(`mock_hr` has no `users`/`user_roles` either, gap S6), and would be believed.
+Reported rather than worked around.
 
 **Goal** Permission-filtered retrieval and a hardened, audited surface.
 **This is the only phase that modifies RAG.**
@@ -1249,11 +1309,13 @@ the LLM); the prompt-injection suite passes; the startup guard still rejects an
 embedding-model mismatch.
 
 **Acceptance criteria**
-1. The six new metadata fields exist, are in `FILTERABLE_FIELDS`, and have Qdrant payload indexes.
-2. All existing RAG tests still pass — the change is additive, not breaking.
-3. Cross-department retrieval leakage: **zero** across the security golden set.
-4. The prompt-injection suite yields zero unauthorised disclosures.
-5. Re-ingest is documented and reproducible.
+1. The six new metadata fields exist, are in `FILTERABLE_FIELDS`, and have Qdrant payload indexes. — **PASS**
+2. All existing RAG tests still pass — the change is additive, not breaking. — **PASS**
+3. Cross-department retrieval leakage: **zero** across the security golden set. — **PASS** against the
+   live index; the *golden set* itself is Phase 8's.
+4. The prompt-injection suite yields zero unauthorised disclosures. — **PASS**
+5. Re-ingest is documented and reproducible. — **PASS** (`make reingest`; chunk ids are
+   derived from content and position, so a second run writes the same points)
 
 ---
 

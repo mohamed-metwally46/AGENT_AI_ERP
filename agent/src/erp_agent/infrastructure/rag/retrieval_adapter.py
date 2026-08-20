@@ -10,6 +10,13 @@ applies it. There is no post-filtering step here, and adding one would be the
 wrong fix for any leak found later: by the time a chunk has been retrieved it has
 been read, and the design's whole claim is that the model never receives one it
 may not read (Plan.md section 8.4).
+
+Since Phase 6 that filter is a predicate over the chunk's own security metadata
+rather than a list of permitted document ids, so the store decides per chunk and
+this adapter no longer has to enumerate the corpus before every search. The
+catalogue stays for two jobs it is still the right answer to: resolving a
+document's human-readable title for a citation, and reporting how much the
+principal was permitted to search.
 """
 
 from __future__ import annotations
@@ -69,18 +76,15 @@ class RagRetrievalAdapter(KnowledgeBase):
         top_k: int = 5,
     ) -> DocumentEvidence:
         """Search the documents this principal may read."""
+        # The manifest's view of how much this principal was allowed to look at.
+        # Reported, not enforced: since Phase 6 the enforcement is the metadata
+        # predicate below, which the store applies to each chunk's own tags.
         permitted = allowed_document_ids(context, self._catalogue)
-
-        if not permitted:
-            # Short-circuit rather than retrieve with an absent filter. An
-            # empty permitted set must mean "search nothing", and the one way
-            # to be certain of that is not to issue the query.
-            return DocumentEvidence(query=query, passages=(), searched_document_count=0)
 
         request = RetrievalRequest(
             query_text=query,
             top_k=min(max(top_k * _CANDIDATE_MULTIPLIER, top_k), _MAX_CANDIDATES),
-            filters=retrieval_filter(context, self._catalogue),
+            filters=retrieval_filter(context),
         )
 
         try:
