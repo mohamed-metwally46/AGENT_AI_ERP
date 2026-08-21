@@ -19,10 +19,10 @@ security requirements and the future ERP integration strategy live here.
 
 | | |
 |---|---|
-| **CURRENT PHASE** | Phase 8 — Evaluation Layer |
-| **CURRENT TASK** | *(none — Phase 8 complete; awaiting go-ahead for Phase 9)* |
-| **NEXT TASK** | **Phase 9 — ERP Integration Readiness** |
-| **COMPLETED TASKS** | Phase 0 (0.1–0.3); Phase 1 (1.1); Phase 2 (2.1–2.3); Phase 3; Phase 4; Phase 5; Phase 6; Phase 7; Phase 8 |
+| **CURRENT PHASE** | Phase 9 — ERP Integration Readiness |
+| **CURRENT TASK** | *(none — every phase in this plan is complete)* |
+| **NEXT TASK** | *(none in this plan. The open items are gaps S2 and S6, which need ERP owner decisions, and Phase 3's gap G6 — see the ledger below)* |
+| **COMPLETED TASKS** | Phase 0 (0.1–0.3); Phase 1 (1.1); Phase 2 (2.1–2.3); Phases 3–9 |
 
 ### Completed
 
@@ -41,6 +41,7 @@ security requirements and the future ERP integration strategy live here.
 | 6 | Security Hardening — gap G3 closed additively in RAG (6 indexed security fields), per-chunk permission predicate, tagged ingestion path, reproducible re-ingest; permission map blocked on gap S2 | 2026-08-20 |
 | 7 | API Layer — `POST /ask`, bearer authentication, per-principal rate limiting, bounded conversations, sanitised errors, published OpenAPI; RAG wired into the composition root | 2026-08-20 |
 | 8 | Evaluation Layer — 65 golden cases, retrieval/grounding/tool/security metrics, deterministic replay harness, `make gate`; gap G9 closed | 2026-08-20 |
+| 9 | ERP Integration Readiness — declared schema contract, live drift check (`make drift`), cutover and rollback runbook; identity path blocked on gaps S2 and S6 | 2026-08-21 |
 
 ### Phase ledger
 
@@ -55,7 +56,7 @@ security requirements and the future ERP integration strategy live here.
 | 6 | Security Hardening + RAG Metadata Filtering | ✅ Complete (permission map blocked on S2) |
 | 7 | API Layer | ✅ Complete |
 | 8 | Evaluation Layer | ✅ Complete |
-| 9 | ERP Integration Readiness | ⬜ Next |
+| 9 | ERP Integration Readiness | ✅ Complete (identity path blocked on S2/S6) |
 
 ---
 
@@ -1456,7 +1457,42 @@ happened; `RagRetrievalAdapter.warm()` now runs at start-up.
 
 ---
 
-### Phase 9 — ERP Integration Readiness
+### Phase 9 — ERP Integration Readiness ✅ COMPLETE (identity path blocked)
+
+**Delivered (2026-08-21)** A declared schema contract — ten tables and only the
+columns the query layer touches — checked against a live target by
+`python -m erp_agent --drift` / `make drift`; and `docs/erp-cutover.md`, the
+runbook for the migration and the way back.
+
+**Verified** The drift check reports COMPATIBLE against `mock_hr`, exit 0, and
+reports missing tables, missing columns and changed types when the contract is
+bent to describe a database nobody has — a checker that has only ever returned
+COMPATIBLE has not been shown to detect anything.
+
+**Criterion 1 is a property of the source tree, not a claim.** SQL is
+constructed in exactly one place, one deliberate exception aside (the `--check`
+connectivity probe, named in the test so a second exception has to be argued
+for); no module outside `config` holds a connection string; the DSN reaches the
+driver by one path. Asserted in `tests/architecture`, so a cutover that ever
+needs a second edit fails a test first.
+
+**Found by running it** The catalogue query returned a row per column, the data
+source clamped it to the configured row cap — correctly; that cap is a safety
+property — and the check confidently reported six present tables as missing. The
+fix was to ask a question whose answer is small, not to lift the cap. What
+exposed it was the report contradicting itself: the same tables appeared under
+both "missing" and "present but not readable". Those two are now mutually
+exclusive by construction, and a test asserts it, so the next such bug does not
+depend on somebody noticing an oddity.
+
+**Blocked: the identity path.** The data path is ready to cut over; principal
+resolution is not, and no amount of work here changes that. `users` and
+`user_roles` are Platform tables `mock_hr` does not have (gap S6), and the real
+resolver is a join through `role_permissions → permissions`, whose `resource`
+vocabulary is enumerated nowhere (gap S2). Section 8.5 is explicit that these
+are resolved with the ERP owners and that this plan does not invent answers, so
+they are reported rather than guessed. Both fixtures stay, and the composition
+root refuses the packaged dev credentials in production.
 
 **Goal** Be ready to point at a real ERP without redesign.
 
@@ -1466,9 +1502,19 @@ schema-drift check.
 **Dependencies** Phase 8; ERP owner decisions on Section 13.
 
 **Acceptance criteria**
-1. Switching from `mock_hr` to a read replica is configuration only.
-2. A drift check reports differences between the documented schema and the target.
-3. A documented rollback path exists.
+1. Switching from `mock_hr` to a read replica is configuration only. — **PASS** for the
+   data path, asserted by architecture tests. **Not true of the identity path**:
+   the principal and token fixtures are keyed to one seeding of `mock_hr`, so a
+   real target also needs fixtures whose ids resolve there — until gaps S6 and S2
+   are settled with the ERP owners.
+2. A drift check reports differences between the documented schema and the target. — **PASS**
+   (`make drift`; reports missing tables, unreadable tables, missing columns and
+   changed type families, and distinguishes a missing `GRANT` from a missing table)
+3. A documented rollback path exists. — **PASS** (`agent/docs/erp-cutover.md`).
+   The rollback is one environment variable changed back: the agent writes
+   nothing anywhere, so there is no migration to undo and no state to reconcile.
+   The two things a restart does cost — in-process conversation history, and
+   fixture-keyed principals — are stated rather than glossed.
 
 ---
 

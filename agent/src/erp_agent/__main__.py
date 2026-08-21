@@ -25,7 +25,7 @@ from erp_agent.domain.models.sql import SqlStatement
 
 __all__ = ["main"]
 
-_USAGE = """usage: python -m erp_agent [--check | --serve] [--list-settings]
+_USAGE = """usage: python -m erp_agent [--check | --serve | --drift] [--list-settings]
 
 Boots the ERP agent and reports the resolved configuration.
 
@@ -35,6 +35,9 @@ options:
                     non-zero if the connection is not provably read-only.
   --serve           Start the HTTP API. Runs full start-up first, so the server
                     binds only after the write barrier has been proved.
+  --drift           Compare the configured database against the schema this
+                    agent requires, and exit non-zero if it is incompatible.
+                    Reads only the catalogue, so it is safe against production.
   --list-settings   List every environment variable the system reads and exit.
                     Works even when the current configuration is invalid.
 """
@@ -144,6 +147,10 @@ def main(
     if serve:
         arguments.remove("--serve")
 
+    drift = "--drift" in arguments
+    if drift:
+        arguments.remove("--drift")
+
     if arguments:
         out.write(f"unrecognised arguments: {' '.join(arguments)}\n\n{_USAGE}")
         return 1
@@ -159,9 +166,36 @@ def main(
 
     if serve:
         return _serve(settings, out)
+    if drift:
+        return run_async(_check_drift(settings, out))
     if check:
         return run_async(_check_database(settings, out))
     return 0
+
+
+async def _check_drift(settings: Settings, out: TextIO) -> int:
+    """Compare the configured database against the agent's schema contract.
+
+    Kept separate from ``--check``: that one proves the connection cannot write,
+    this one proves the schema is one the agent can read. A cutover needs both
+    answers and they fail for entirely different reasons.
+    """
+    from erp_agent.core.container import Container
+    from erp_agent.infrastructure.database.drift import check_drift, render_drift
+
+    container = Container(settings)
+    try:
+        await container.open()
+    except ErpAgentError as exc:
+        out.write(f"  connectivity       UNAVAILABLE\n\n  {exc.message}\n\n")
+        return 1
+
+    try:
+        report = await check_drift(container.data_source, database=settings.database.parts.database)
+        out.write(render_drift(report))
+        return 0 if report.compatible else 1
+    finally:
+        await container.close()
 
 
 def _serve(settings: Settings, out: TextIO) -> int:

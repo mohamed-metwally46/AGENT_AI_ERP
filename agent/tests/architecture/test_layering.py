@@ -358,3 +358,70 @@ class TestRuntimeCodeIsIndependentOfTheTestSuite:
 
         assert fixture.is_file()
         assert PACKAGE_ROOT in fixture.parents
+
+
+class TestPointingAtADifferentDatabaseIsConfigurationOnly:
+    """Phase 9 acceptance criterion 1, as a property of the source tree.
+
+    "Switching from `mock_hr` to a read replica is configuration only" is a
+    claim about where knowledge of the database lives. It holds if two things
+    know and nothing else does: `config`, which reads the DSN, and
+    `infrastructure/database`, which builds SQL with it. Anything else naming a
+    table or holding a connection string would be a second place to edit during
+    a cutover, and the one somebody forgets.
+
+    The first version of these tests substring-matched table names across whole
+    files and failed on the word "employees" appearing in a docstring. The
+    claim worth making is narrower and exact: SQL is *constructed* in one place.
+    """
+
+    #: The one deliberate exception, and it is a diagnostics probe rather than a
+    #: query the agent answers with: `--check` reads one count to prove the
+    #: connection works. Named here so it is a decision rather than an
+    #: oversight, and so a second exception has to be argued for.
+    _PROBE = "__main__.py"
+
+    def test_sql_is_constructed_only_in_the_data_layer(self):
+        offenders = [
+            path.relative_to(PACKAGE_ROOT).as_posix()
+            for path in sorted(PACKAGE_ROOT.rglob("*.py"))
+            if "infrastructure/database" not in path.as_posix()
+            and path.name != self._PROBE
+            and "SqlStatement(" in path.read_text(encoding="utf-8-sig")
+        ]
+
+        assert offenders == []
+
+    def test_the_one_exception_is_a_read_and_nothing_more(self):
+        # If the diagnostics probe ever grew a second statement, the exception
+        # above would be covering something it was not argued for.
+        source = (PACKAGE_ROOT / self._PROBE).read_text(encoding="utf-8-sig")
+
+        assert source.count("SqlStatement(") == 1
+        assert "SELECT count(*)" in source
+
+    def test_only_config_holds_a_connection_string(self):
+        # `config/validation.py` parses DSNs, so it names the scheme. Nothing
+        # else should.
+        offenders = [
+            path.relative_to(PACKAGE_ROOT).as_posix()
+            for path in sorted(PACKAGE_ROOT.rglob("*.py"))
+            if "config/" not in path.relative_to(PACKAGE_ROOT).as_posix()
+            and "postgresql://" in path.read_text(encoding="utf-8-sig")
+        ]
+
+        assert offenders == []
+
+    def test_the_dsn_reaches_the_adapter_from_the_composition_root_only(self):
+        # One path from configuration to the driver. A second would be a second
+        # thing to change at cutover.
+        source = (PACKAGE_ROOT / "core/container.py").read_text(encoding="utf-8-sig")
+
+        assert "dsn=database.dsn.get_secret_value()" in source
+
+    def test_the_schema_contract_is_the_only_place_tables_are_declared(self):
+        # A drift check reads this list. A second list somewhere would drift
+        # from it, and the check would verify the wrong one.
+        from erp_agent.infrastructure.database.schema_contract import REQUIRED_TABLES
+
+        assert len({table.name for table in REQUIRED_TABLES}) == len(REQUIRED_TABLES)

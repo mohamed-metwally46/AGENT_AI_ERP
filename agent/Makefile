@@ -7,7 +7,7 @@
 .DEFAULT_GOAL := help
 UV := uv run
 
-.PHONY: help install fmt fmt-check lint types arch test test-unit test-integration test-security cov check clean role serve check-config reingest eval eval-live gate
+.PHONY: help install fmt fmt-check lint types arch test test-unit test-integration test-security cov check clean role serve check-config reingest eval eval-live gate drift
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -63,6 +63,9 @@ serve: ## Start the HTTP API (proves the write barrier first)
 
 check-config: ## Report the resolved configuration and prove the write barrier
 	$(UV) python -m erp_agent --check
+
+drift: ## Compare the configured database against the schema this agent requires
+	$(UV) python -m erp_agent --drift
 
 role: ## (Re-)apply the read-only role to the running mock database
 	docker exec mock-hr-postgres psql -U hr_user -d mock_hr \
