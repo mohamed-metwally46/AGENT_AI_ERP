@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pathlib
+
 import pytest
 
 from erp_agent.config import Settings
@@ -16,6 +18,11 @@ _GOOD_DSN = "postgresql://mock_hr_readonly:readonly_password@localhost:5433/mock
 
 def _env(**overrides: str) -> dict[str, str]:
     return {"ERP_DATABASE_URL": _GOOD_DSN, **overrides}
+
+
+def _a_readable_file() -> str:
+    """Any existing file: these checks only ask whether a path was configured."""
+    return str(pathlib.Path(__file__).resolve())
 
 
 class TestLoadSettings:
@@ -44,7 +51,7 @@ class TestStartupChecks:
     def test_a_sane_local_configuration_passes(self):
         settings = load_settings(_env(), use_env_file=False)
 
-        assert run_startup_checks(settings) == ("logging", "database-role")
+        assert run_startup_checks(settings) == ("logging", "database-role", "mock-credentials")
 
     def test_production_must_emit_queryable_logs(self):
         settings = load_settings(
@@ -55,7 +62,18 @@ class TestStartupChecks:
             run_startup_checks(settings)
 
     def test_production_with_json_logs_passes(self):
-        settings = load_settings(_env(APP_ENV="production", LOG_FORMAT="json"), use_env_file=False)
+        # Production must also point the identity fixtures somewhere real; the
+        # packaged development copies are refused. See
+        # tests/unit/core/test_mock_credentials_are_not_production.py.
+        settings = load_settings(
+            _env(
+                APP_ENV="production",
+                LOG_FORMAT="json",
+                ERP_PRINCIPAL_FIXTURE_PATH=_a_readable_file(),
+                ERP_ACCESS_TOKEN_FIXTURE_PATH=_a_readable_file(),
+            ),
+            use_env_file=False,
+        )
 
         assert "logging" in run_startup_checks(settings)
 

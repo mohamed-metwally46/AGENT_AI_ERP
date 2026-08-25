@@ -69,6 +69,10 @@ RESERVED_ARGUMENT_NAMES: frozenset[str] = frozenset(
         "allowed_branch_ids",
         "role_names",
         "roles",
+        # Resolved from roles before the model runs. A model that could pass a
+        # permission would be granting itself one.
+        "permissions",
+        "permission_levels",
         # Row caps are ours, never the model's.
         "limit",
         "max_rows",

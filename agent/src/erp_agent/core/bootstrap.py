@@ -5,8 +5,9 @@ rather than answering its first question through a connection nobody verified.
 
 Checks grow with the system. Phase 1 validates the configuration, the log format
 and -- the substance of Task 1.1 -- that the database connection is provably
-incapable of writing. Later phases add credential and vector-store checks as
-their adapters arrive.
+incapable of writing. The mock identity work adds the one that refuses
+development credentials in production, deliberately here rather than only in the
+container: see :func:`_check_mock_credentials`.
 """
 
 from __future__ import annotations
@@ -74,7 +75,8 @@ def run_startup_checks(settings: Settings) -> tuple[str, ...]:
     """
     _check_logging(settings)
     _check_database_role(settings)
-    return ("logging", "database-role")
+    _check_mock_credentials(settings)
+    return ("logging", "database-role", "mock-credentials")
 
 
 def _check_logging(settings: Settings) -> None:
@@ -85,6 +87,51 @@ def _check_logging(settings: Settings) -> None:
             "cannot be queried by log aggregation",
             context={"variable": "LOG_FORMAT", "value": settings.app.log_format.value},
         )
+
+
+def _check_mock_credentials(settings: Settings) -> None:
+    """Refuse the packaged development identity files in production.
+
+    :class:`~erp_agent.core.container.Container` refuses them too, when it
+    builds the adapters. This check exists *as well* because those are
+    ``cached_property`` and therefore only refuse when something touches them:
+    a process that answered a health check before its first authenticated
+    question would have started successfully with mock credentials loaded.
+    Here the refusal is unconditional and happens at boot.
+
+    Both files matter, and for different reasons. The roster grants
+    organisation scope to a fixed identity; the token file is what lets someone
+    present that identity. Overriding one and not the other is not enough.
+
+    Args:
+        settings: The loaded configuration.
+
+    Raises:
+        ConfigurationError: If ``APP_ENV=production`` and either fixture path is
+            unset, so the packaged development file would apply by default.
+    """
+    if not settings.app.is_production:
+        return
+
+    for variable, path, what in (
+        (
+            "ERP_PRINCIPAL_FIXTURE_PATH",
+            settings.security.principal_fixture_path,
+            "the mock identity roster (it grants organisation scope to a fixed identity)",
+        ),
+        (
+            "ERP_ACCESS_TOKEN_FIXTURE_PATH",
+            settings.security.access_token_fixture_path,
+            "the development bearer credentials (they are static and non-expiring)",
+        ),
+    ):
+        if path is None:
+            raise ConfigurationError(
+                f"{variable} is unset, so {what} would be loaded from the copy "
+                f"packaged with this application; development credentials must not "
+                f"authorise a production deployment",
+                context={"variable": variable},
+            )
 
 
 def _check_database_role(settings: Settings) -> None:

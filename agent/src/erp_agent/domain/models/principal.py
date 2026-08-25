@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from erp_agent.domain.models.authorization import PermissionSet
 from erp_agent.domain.models.security_context import (
     DataScope,
     SecurityContext,
@@ -46,7 +47,13 @@ class Principal:
         branch_id: Their own branch.
         allowed_branch_ids: Branches reachable under ``BRANCH`` scope, from
             ``user_roles.branch_id``.
-        role_names: Role names held, used for field-level decisions.
+        role_names: Role names held. Diagnostic only; the authority is
+            ``permissions``.
+        permissions: What those roles grant, resolved through the role
+            catalogue before this object was built. Resolution happens on our
+            side of the boundary for the same reason ``manager_of`` does -- an
+            identity store that could assert a permission set would be an
+            identity store choosing its holders' access.
     """
 
     user_id: str
@@ -56,6 +63,7 @@ class Principal:
     branch_id: str | None = None
     allowed_branch_ids: frozenset[str] = field(default_factory=frozenset)
     role_names: frozenset[str] = field(default_factory=frozenset)
+    permissions: PermissionSet = field(default_factory=PermissionSet)
 
     def __post_init__(self) -> None:
         """Validate the identity is usable.
@@ -108,4 +116,5 @@ class Principal:
             allowed_branch_ids=self.allowed_branch_ids,
             manager_of=manager_of,
             role_names=self.role_names,
+            permissions=self.permissions,
         )

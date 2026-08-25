@@ -147,20 +147,30 @@ class TestValidation:
         assert leaked not in caught.value.message
 
 
-class TestTheDevFixtureMatchesTheDevPrincipals:
-    async def test_every_dev_token_resolves_to_a_known_principal(self):
-        # The two fixtures are regenerated together after a re-seed, and a
-        # token pointing at an identity nobody can resolve is a 401 that looks
-        # like a bad credential.
-        import yaml
+class TestTheDevFixtureMatchesTheMockRoster:
+    def test_every_dev_token_names_an_identity_the_roster_has(self):
+        # A token pointing at an identity nobody can resolve is a 401 that looks
+        # like a bad credential -- the most confusing failure available, since
+        # the token itself is fine.
+        assert _token_identities() <= _roster_identities()
 
-        from erp_agent.infrastructure.security.fixture_principal_resolver import (
-            FixturePrincipalResolver,
-            default_fixture_path,
-        )
+    def test_every_mock_user_has_a_credential(self):
+        # The other direction. A rostered user nobody can authenticate as is a
+        # user nobody will notice is broken.
+        assert _roster_identities() <= _token_identities()
 
-        tokens = yaml.safe_load(default_token_fixture_path().read_text(encoding="utf-8"))
-        principals = FixturePrincipalResolver.from_file(default_fixture_path())
 
-        for row in tokens["tokens"]:
-            assert await principals.resolve(row["identity"]) is not None
+def _token_identities() -> set[str]:
+    import yaml
+
+    document = yaml.safe_load(default_token_fixture_path().read_text(encoding="utf-8"))
+    return {row["identity"] for row in document["tokens"]}
+
+
+def _roster_identities() -> set[str]:
+    import yaml
+
+    from erp_agent.infrastructure.security import default_identity_fixture_path
+
+    document = yaml.safe_load(default_identity_fixture_path().read_text(encoding="utf-8"))
+    return {row["user_id"] for row in document["users"]}

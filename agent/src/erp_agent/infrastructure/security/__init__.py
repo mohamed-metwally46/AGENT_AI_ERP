@@ -6,16 +6,18 @@ from erp_agent.infrastructure.security.fixture_access_tokens import (
     FixtureAccessTokens,
     default_token_fixture_path,
 )
-from erp_agent.infrastructure.security.fixture_principal_resolver import (
+from erp_agent.infrastructure.security.mock_identity import (
     SUPPORTED_SCHEMA_VERSION,
-    FixturePrincipalResolver,
-    default_fixture_path,
+    MockIdentityResolver,
+    default_identity_fixture_path,
+    packaged_role_catalogue,
 )
 
 __all__ = [
     "SUPPORTED_SCHEMA_VERSION",
     "FixtureAccessTokens",
-    "FixturePrincipalResolver",
-    "default_fixture_path",
+    "MockIdentityResolver",
+    "default_identity_fixture_path",
     "default_token_fixture_path",
+    "packaged_role_catalogue",
 ]

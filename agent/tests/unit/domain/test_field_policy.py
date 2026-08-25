@@ -1,16 +1,26 @@
-"""Field-level restrictions (Plan.md section 8.3)."""
+"""Field-level restrictions (Plan.md section 8.3).
+
+The conditional categories are gated on *permissions* now rather than on
+hard-coded role names, so the contexts below are built by resolving real roles
+through the packaged catalogue. That is deliberate: a test that granted
+``hr.contact_pii:read`` by hand would still pass if the catalogue stopped
+granting it to any role anybody holds, and the policy would be correct about a
+permission nobody has.
+"""
 
 from __future__ import annotations
 
 import pytest
 
 from erp_agent.domain.errors import RestrictedFieldError
+from erp_agent.domain.models.authorization import PermissionSet
 from erp_agent.domain.models.security_context import DataScope, SecurityContext
 from erp_agent.domain.policies.field_policy import (
     assert_columns_permitted,
     is_never_returned,
     permitted_columns,
 )
+from erp_agent.infrastructure.security.mock_identity import packaged_role_catalogue
 
 pytestmark = [pytest.mark.unit, pytest.mark.security]
 
@@ -21,6 +31,8 @@ BOB = "22222222-2222-2222-2222-222222222222"
 def _context(
     scope: DataScope = DataScope.SELF, roles: frozenset[str] = frozenset()
 ) -> SecurityContext:
+    """A context whose permissions are what those roles really resolve to."""
+    permissions = packaged_role_catalogue().resolve(roles).permissions if roles else PermissionSet()
     return SecurityContext(
         user_id="42",
         employee_id=ALICE,
@@ -29,6 +41,7 @@ def _context(
         branch_id="branch",
         allowed_branch_ids=frozenset({"branch"}),
         role_names=roles,
+        permissions=permissions,
     )
 
 
@@ -50,7 +63,7 @@ class TestNeverReturned:
 
     @pytest.mark.parametrize("scope", list(DataScope))
     def test_not_even_an_organisation_scoped_admin_may_read_them(self, scope):
-        context = _context(scope, roles=frozenset({"hr_admin", "payroll", "superuser"}))
+        context = _context(scope, roles=frozenset({"admin"}))
 
         assert permitted_columns(["national_id", "bank_iban"], context) == ()
 
@@ -84,14 +97,14 @@ class TestCompensation:
         assert permitted_columns(["net_salary"], context, subject_employee_id=BOB) == ()
 
     def test_a_payroll_role_may(self):
-        context = _context(DataScope.ORGANISATION, roles=frozenset({"payroll"}))
+        context = _context(DataScope.ORGANISATION, roles=frozenset({"payroll_officer"}))
 
         assert permitted_columns(["net_salary"], context, subject_employee_id=BOB) == (
             "net_salary",
         )
 
     def test_an_hr_role_is_not_automatically_a_payroll_role(self):
-        context = _context(DataScope.ORGANISATION, roles=frozenset({"hr"}))
+        context = _context(DataScope.ORGANISATION, roles=frozenset({"hr_employee"}))
 
         assert permitted_columns(["gross_salary"], context, subject_employee_id=BOB) == ()
 

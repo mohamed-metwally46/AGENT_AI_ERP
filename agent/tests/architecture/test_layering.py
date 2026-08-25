@@ -351,10 +351,16 @@ class TestRuntimeCodeIsIndependentOfTheTestSuite:
 
         assert offenders == []
 
-    def test_the_packaged_dev_fixture_is_inside_the_package(self):
-        from erp_agent.infrastructure.security import default_fixture_path
+    @pytest.mark.parametrize(
+        "name", ["default_identity_fixture_path", "default_token_fixture_path"]
+    )
+    def test_the_packaged_dev_fixtures_are_inside_the_package(self, name):
+        # They are data the wheel has to carry (pyproject `artifacts`). A fixture
+        # resolved from outside the package works in a checkout and vanishes in
+        # an installed one.
+        import erp_agent.infrastructure.security as security
 
-        fixture = default_fixture_path()
+        fixture = getattr(security, name)()
 
         assert fixture.is_file()
         assert PACKAGE_ROOT in fixture.parents

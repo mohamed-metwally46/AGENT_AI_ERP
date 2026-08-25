@@ -1,0 +1,156 @@
+# Dev-mode identity store for the ERP AI agent.
+#
+# ---------------------------------------------------------------------------
+# DEVELOPMENT ONLY. THIS MUST NOT AUTHORISE A REAL DEPLOYMENT.
+#
+# It stands in for four Platform tables that `mock_hr` does not have and that
+# this work deliberately does not create (Plan.md section 8.5, gap S6):
+#
+#     roles              -> the `roles:` block below
+#     role_permissions   -> each role's `grants:` list
+#     permissions        -> the (resource, action) pairs inside those grants
+#     users + user_roles -> the `users:` block below
+#
+# The composition root refuses this packaged file when APP_ENV=production, and
+# `run_startup_checks` refuses it again independently. See docs/mock-identity.md
+# for how an ERPIdentityResolver replaces it.
+# ---------------------------------------------------------------------------
+#
+# Employees are named by `employee_number` -- the stable business key. The
+# employee id, department and branch are looked up from the database at
+# start-up, so this file survives `docker compose down -v`. Nothing here is a
+# uuid, and nothing here needs regenerating.
+#
+# `resource` values are validated against erp_agent.domain.models.authorization
+# .Resource; a resource this build does not implement fails at load rather than
+# resolving to a permission that grants nothing.
+
+schema_version: 2
+
+# ---------------------------------------------------------------------------
+# Roles. Each grants one rung of the scope ladder and a set of permissions.
+# A user holding several gets the WIDEST scope and the UNION of the grants.
+# ---------------------------------------------------------------------------
+roles:
+  - name: admin
+    scope: organisation
+    description: >-
+      System administrator. Reads the whole organisation, including contact
+      detail and compensation. Note what this still does not unlock: identity
+      documents, banking and health data are in NEVER_RETURNED, and there is
+      deliberately no role that reaches them.
+    grants:
+      - {resource: hr.employee, action: read, level: read}
+      - {resource: hr.contact_pii, action: read, level: read}
+      - {resource: hr.compensation, action: read, level: read}
+      - {resource: hr.leave, action: read, level: read}
+      - {resource: hr.attendance, action: read, level: read}
+      - {resource: documents, action: read, level: read}
+
+  - name: hr_manager
+    scope: branch
+    description: >-
+      HR leadership for a branch. Contact detail about anyone in reach;
+      compensation still not, which needs a payroll grant (Plan.md 8.3).
+    grants:
+      - {resource: hr.employee, action: read, level: read}
+      - {resource: hr.contact_pii, action: read, level: read}
+      - {resource: hr.leave, action: read, level: read}
+      - {resource: hr.attendance, action: read, level: read}
+      - {resource: documents, action: read, level: read}
+
+  - name: hr_employee
+    scope: department
+    description: >-
+      HR staff. Same permissions as hr_manager, a narrower reach -- which is
+      the point of keeping scope and permission separate.
+    grants:
+      - {resource: hr.employee, action: read, level: read}
+      - {resource: hr.contact_pii, action: read, level: read}
+      - {resource: hr.leave, action: read, level: read}
+      - {resource: hr.attendance, action: read, level: read}
+      - {resource: documents, action: read, level: read}
+
+  - name: sales_manager
+    scope: team
+    description: >-
+      Line manager in Sales. Reaches their reporting tree, computed from the
+      database rather than asserted here. No contact PII: managing somebody is
+      not a reason to hold their home address.
+    grants:
+      - {resource: hr.employee, action: read, level: read}
+      - {resource: hr.leave, action: read, level: read}
+      - {resource: hr.attendance, action: read, level: read}
+      - {resource: documents, action: read, level: read}
+
+  - name: payroll_officer
+    scope: department
+    description: >-
+      Compensation, and nothing personal. Holds hr.compensation but not
+      hr.contact_pii -- the two categories are independent in Plan.md 8.3 and
+      independent here.
+    grants:
+      - {resource: hr.employee, action: read, level: read}
+      - {resource: hr.compensation, action: read, level: read}
+      - {resource: documents, action: read, level: read}
+
+  - name: employee
+    scope: self
+    description: >-
+      An individual contributor. The narrowest rung: their own record only.
+      Their own compensation and contact detail are still readable, because
+      that is a relationship rather than a permission (field_policy).
+    grants:
+      - {resource: hr.employee, action: read, level: read}
+      - {resource: hr.leave, action: read, level: read}
+      - {resource: hr.attendance, action: read, level: read}
+      - {resource: documents, action: read, level: read}
+
+
+# ---------------------------------------------------------------------------
+# Users. `user_id` is the authenticated identity -- what a credential in
+# access_tokens.dev.yaml maps to, and what `users.id` will supply after
+# cutover. It is NOT the employee id.
+# ---------------------------------------------------------------------------
+users:
+  - user_id: "1001"
+    employee_number: "EMP-0001"
+    roles: [admin]
+    description: "CEO, Executive Office -- organisation scope"
+
+  - user_id: "1002"
+    employee_number: "EMP-0002"
+    roles: [hr_manager]
+    description: "HR director -- branch scope, contact PII"
+
+  - user_id: "1048"
+    employee_number: "EMP-0048"
+    roles: [hr_employee]
+    description: "HR staff -- department scope, contact PII"
+
+  - user_id: "1008"
+    employee_number: "EMP-0008"
+    roles: [sales_manager]
+    description: "Sales line manager -- team scope, no contact PII"
+
+  - user_id: "1016"
+    employee_number: "EMP-0016"
+    roles: [employee]
+    description: "Sales individual contributor -- self scope, the narrowest rung"
+
+  # --- multiple roles -----------------------------------------------------
+  - user_id: "1006"
+    employee_number: "EMP-0006"
+    roles: [hr_employee, payroll_officer]
+    description: >-
+      HR manager who also runs payroll. Both roles are department-scoped, so
+      the interesting result is the permission union: contact PII from one and
+      compensation from the other, a combination neither role confers alone.
+
+  - user_id: "1003"
+    employee_number: "EMP-0003"
+    roles: [employee, payroll_officer]
+    description: >-
+      Finance director. Holds self scope and department scope; resolves to
+      DEPARTMENT, and holds hr.compensation, which the `employee` role alone
+      never confers.

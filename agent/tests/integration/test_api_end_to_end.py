@@ -34,6 +34,10 @@ from erp_agent.core.bootstrap import load_settings
 from erp_agent.core.container import Container
 from erp_agent.core.event_loop import loop_factory
 from erp_agent.infrastructure.security.fixture_access_tokens import default_token_fixture_path
+from erp_agent.infrastructure.security.mock_identity import (
+    default_identity_fixture_path,
+    packaged_role_catalogue,
+)
 from erp_agent.interfaces.api.app import create_app
 
 pytestmark = [pytest.mark.integration, pytest.mark.security]
@@ -86,21 +90,26 @@ def _text(text: str) -> LLMResponse:
 
 @pytest.fixture(scope="module")
 def dev_tokens() -> dict[str, str]:
-    """The packaged dev credentials, keyed by the scope their principal has."""
+    """The packaged dev credentials, keyed by the scope their user resolves to.
+
+    The scope is *resolved* through the real role catalogue rather than read off
+    the roster, because the roster no longer states one -- it names roles, and
+    what they add up to is the rule under test elsewhere. Several users can
+    share a rung; the first in file order wins, so which credential a test gets
+    does not depend on dictionary iteration.
+    """
     document = yaml.safe_load(default_token_fixture_path().read_text(encoding="utf-8"))
     by_identity = {row["identity"]: row["token"] for row in document["tokens"]}
 
-    principals = yaml.safe_load(
-        (
-            Path(__file__).resolve().parents[2]
-            / "src/erp_agent/infrastructure/security/fixtures/principals.dev.yaml"
-        ).read_text(encoding="utf-8")
-    )
-    return {
-        row["scope"]: by_identity[row["employee_id"]]
-        for row in principals["principals"]
-        if row["employee_id"] in by_identity
-    }
+    catalogue = packaged_role_catalogue()
+    roster = yaml.safe_load(default_identity_fixture_path().read_text(encoding="utf-8"))
+
+    tokens: dict[str, str] = {}
+    for row in roster["users"]:
+        if row["user_id"] in by_identity:
+            scope = catalogue.resolve(row["roles"]).scope.value
+            tokens.setdefault(scope, by_identity[row["user_id"]])
+    return tokens
 
 
 @pytest.fixture

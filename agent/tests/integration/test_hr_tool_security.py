@@ -31,6 +31,7 @@ from erp_agent.domain.models.security_context import DataScope, SecurityContext
 from erp_agent.domain.models.sql import SqlStatement
 from erp_agent.infrastructure.database.connection import PostgresReadOnlyDataSource
 from erp_agent.infrastructure.database.queries.hr_directory import PostgresHrDirectory
+from erp_agent.infrastructure.security.mock_identity import packaged_role_catalogue
 
 pytestmark = [pytest.mark.integration, pytest.mark.security]
 
@@ -251,11 +252,17 @@ class TestFieldLevelRestrictions:
     async def test_an_hr_role_reads_contact_details_about_others(
         self, directory, sales_person, engineer, source
     ):
+        # The grant comes from resolving the role through the real catalogue,
+        # not from naming it: the policy asks for `hr.contact_pii:read`, and a
+        # test that granted that by hand would keep passing even if no role
+        # anybody holds still conferred it.
+        grant = packaged_role_catalogue().resolve(["hr_manager"])
         hr_context = SecurityContext(
             user_id="1",
             employee_id=str(sales_person["employee_id"]),
             scope=DataScope.ORGANISATION,
-            role_names=frozenset({"hr_manager"}),
+            role_names=grant.role_names,
+            permissions=grant.permissions,
         )
 
         result = await GetEmployeeTool(directory).execute(

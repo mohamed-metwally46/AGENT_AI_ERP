@@ -14,6 +14,15 @@ unlocks them, because the moment one exists it becomes the role everybody has.
 
 The remaining categories are conditional, and the condition is always evaluated
 against the :class:`SecurityContext`, never against a tool argument.
+
+**The condition is a permission, not a role name.** Until the mock identity
+phase these categories were gated on hard-coded role-name sets -- ``HR_ROLES``,
+``PAYROLL_ROLES`` -- which meant the policy shipped its own opinion about which
+roles an organisation has. They are gone. The question asked here is now
+``may this principal read hr.contact_pii?``, and the answer comes from the grant
+their roles resolved to, which the identity store supplies and an ERP row will
+supply after cutover. Behaviour is unchanged for the roles that already existed;
+what changed is where the grant is written down.
 """
 
 from __future__ import annotations
@@ -21,14 +30,15 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 
 from erp_agent.domain.errors import RestrictedFieldError
+from erp_agent.domain.models.authorization import Action, Permission, Resource
 from erp_agent.domain.models.security_context import SecurityContext
 
 __all__ = [
     "COMPENSATION",
     "CONTACT_PII",
-    "HR_ROLES",
     "NEVER_RETURNED",
-    "PAYROLL_ROLES",
+    "READ_COMPENSATION",
+    "READ_CONTACT_PII",
     "assert_columns_permitted",
     "is_never_returned",
     "permitted_columns",
@@ -58,8 +68,9 @@ NEVER_RETURNED: frozenset[str] = frozenset(
     }
 )
 
-#: Readable by the subject themselves, or by a payroll/finance role holding an
-#: explicit permission. Never by a peer, and never by a manager by default.
+#: Readable by the subject themselves, or by a principal granted
+#: :data:`READ_COMPENSATION`. Never by a peer, and never by a manager by
+#: default -- managing somebody is not a reason to see their salary.
 COMPENSATION: frozenset[str] = frozenset(
     {
         "basic_salary",
@@ -76,7 +87,8 @@ COMPENSATION: frozenset[str] = frozenset(
     }
 )
 
-#: Personal contact detail. Readable by the subject, or by an HR role.
+#: Personal contact detail. Readable by the subject, or by a principal granted
+#: :data:`READ_CONTACT_PII`.
 CONTACT_PII: frozenset[str] = frozenset(
     {
         "date_of_birth",
@@ -91,11 +103,13 @@ CONTACT_PII: frozenset[str] = frozenset(
     }
 )
 
-#: Roles trusted with contact PII about other employees.
-HR_ROLES: frozenset[str] = frozenset({"hr", "hr_manager", "hr_admin", "people_ops"})
+#: The permission that unlocks contact detail about *other* employees. Held by
+#: whichever roles the identity store grants it to -- this module no longer
+#: names them.
+READ_CONTACT_PII = Permission(Resource.HR_CONTACT_PII, Action.READ)
 
-#: Roles trusted with compensation about other employees.
-PAYROLL_ROLES: frozenset[str] = frozenset({"payroll", "finance", "finance_manager", "cfo"})
+#: The permission that unlocks compensation about other employees.
+READ_COMPENSATION = Permission(Resource.HR_COMPENSATION, Action.READ)
 
 
 def is_never_returned(column: str) -> bool:
@@ -111,15 +125,20 @@ def is_never_returned(column: str) -> bool:
 
 
 def _may_read_about(
-    trusted_roles: frozenset[str],
+    permission: Permission,
     context: SecurityContext,
     subject_employee_id: str | None,
 ) -> bool:
-    """Whether a conditional category is readable for a given subject."""
-    # The subject reading their own record is always permitted.
+    """Whether a conditional category is readable for a given subject.
+
+    Two ways to qualify, and they are different in kind. The subject reading
+    their *own* record needs no grant -- that is a relationship, not a
+    permission. Reading about somebody else needs the permission, and nothing
+    else will do.
+    """
     if subject_employee_id is not None and subject_employee_id == context.employee_id:
         return True
-    return context.has_any_role(*trusted_roles)
+    return context.may(permission)
 
 
 def permitted_columns(
@@ -153,10 +172,12 @@ def permitted_columns(
         if name in NEVER_RETURNED:
             continue
         if name in COMPENSATION and not _may_read_about(
-            PAYROLL_ROLES, context, subject_employee_id
+            READ_COMPENSATION, context, subject_employee_id
         ):
             continue
-        if name in CONTACT_PII and not _may_read_about(HR_ROLES, context, subject_employee_id):
+        if name in CONTACT_PII and not _may_read_about(
+            READ_CONTACT_PII, context, subject_employee_id
+        ):
             continue
 
         allowed.append(column)

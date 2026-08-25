@@ -34,9 +34,11 @@ from erp_agent.domain.ports.access_tokens import AccessTokenPort
 from erp_agent.domain.ports.data_source import ReadOnlyDataSource
 from erp_agent.domain.ports.hr_directory import HrDirectory
 from erp_agent.domain.ports.knowledge import KnowledgeBase
+from erp_agent.domain.ports.org_placement import OrgPlacementPort
 from erp_agent.domain.ports.principal_resolver import PrincipalResolverPort
 from erp_agent.infrastructure.database.connection import PostgresReadOnlyDataSource
 from erp_agent.infrastructure.database.queries.hr_directory import PostgresHrDirectory
+from erp_agent.infrastructure.database.queries.org_placement import PostgresOrgPlacement
 from erp_agent.infrastructure.llm.factory import build_llm_client
 from erp_agent.infrastructure.rag.document_catalogue import (
     DocumentCatalogue,
@@ -46,9 +48,9 @@ from erp_agent.infrastructure.security.fixture_access_tokens import (
     FixtureAccessTokens,
     default_token_fixture_path,
 )
-from erp_agent.infrastructure.security.fixture_principal_resolver import (
-    FixturePrincipalResolver,
-    default_fixture_path,
+from erp_agent.infrastructure.security.mock_identity import (
+    MockIdentityResolver,
+    default_identity_fixture_path,
 )
 
 __all__ = ["Container"]
@@ -300,25 +302,57 @@ class Container:
         return AnswerErpQuestion(loop=self.agent_loop(llm), conversations=self.conversations)
 
     @cached_property
+    def org_placement(self) -> OrgPlacementPort:
+        """Looks up where rostered employees sit.
+
+        Used only while a principal is being built, and only at start-up. See
+        :mod:`erp_agent.domain.ports.org_placement` for why a query with no
+        security context is safe here and nowhere else.
+        """
+        return PostgresOrgPlacement(self.data_source)
+
+    @cached_property
     def principal_resolver(self) -> PrincipalResolverPort:
         """Resolves an authenticated identity to a principal.
 
-        Typed as the port. Phase 9 swaps the fixture adapter for a join against
-        the Platform ``users`` tables, and nothing above here changes.
+        Typed as the port, so nothing above here can tell a mock roster from an
+        ERP join. Replacing this one expression is the whole cutover; see
+        ``docs/mock-identity.md``.
+
+        The packaged dev roster is refused in production. It is committed to the
+        repository and grants organisation scope to a static identity, and the
+        one place that can tell it is being used unintentionally is here -- the
+        fixture does not know what environment it is in.
+        :func:`~erp_agent.core.bootstrap.run_startup_checks` refuses it a second
+        time, independently, because a ``cached_property`` only runs when
+        something touches it.
 
         The fixture is loaded and validated on first access, which is during
-        start-up -- a malformed principal must not be discovered as a failed
+        start-up: a malformed grant must not be discovered as a failed
         authorization on a live question.
 
         Raises:
-            ConfigurationError: If the fixture is missing, malformed, or
-                declares an unsupported schema version.
+            ConfigurationError: If the fixture is missing, malformed, declares
+                an unsupported schema version, or would be the packaged dev
+                roster in production.
         """
+        configured = self.settings.security.principal_fixture_path
+        if configured is None and self.settings.app.env is AppEnv.PRODUCTION:
+            raise ConfigurationError(
+                "ERP_PRINCIPAL_FIXTURE_PATH is unset, so the packaged mock identity "
+                "roster would be used; it is committed to the repository and grants "
+                "organisation scope to a fixed identity, and must not authorise a "
+                "production deployment",
+                context={"variable": "ERP_PRINCIPAL_FIXTURE_PATH"},
+            )
+
         # Resolving `None` to the packaged file happens here rather than in
         # config, which imports no other layer and cannot know where an
         # infrastructure file lives.
-        path = self.settings.security.principal_fixture_path or default_fixture_path()
-        return FixturePrincipalResolver.from_file(path)
+        return MockIdentityResolver.from_file(
+            configured or default_identity_fixture_path(),
+            placements=self.org_placement,
+        )
 
     async def open(self) -> None:
         """Open every resource the container owns.
@@ -331,8 +365,9 @@ class Container:
     async def warm(self) -> None:
         """Do the expensive lazy work now, not inside the first request.
 
-        Only the retriever has any today: its embedding model loads on first
-        use and takes long enough to exceed the loop's per-tool ceiling.
+        Two things do: the retriever's embedding model loads on first use and
+        takes long enough to exceed the loop's per-tool ceiling, and the
+        identity resolver has a roster to place.
 
         Duck-typed rather than widened into the ``KnowledgeBase`` port, for the
         same reason the loop duck-types ``render_for_model``: warming is a
@@ -342,6 +377,13 @@ class Container:
         warm = getattr(self.knowledge, "warm", None)
         if callable(warm):
             await warm()
+
+        # The identity roster names employee numbers; their org placement is a
+        # database read. Done here so a roster entry naming an employee the
+        # database does not have fails start-up rather than somebody's question.
+        prepare = getattr(self.principal_resolver, "prepare", None)
+        if callable(prepare):
+            await prepare()
 
     async def close(self) -> None:
         """Release every resource the container owns."""

@@ -36,7 +36,7 @@ from erp_agent.domain.models.hr import (
 )
 from erp_agent.domain.models.security_context import SecurityContext
 from erp_agent.domain.models.sql import Row, SqlStatement
-from erp_agent.domain.policies.field_policy import HR_ROLES
+from erp_agent.domain.policies.field_policy import READ_CONTACT_PII
 from erp_agent.domain.policies.scope import visible_employees
 from erp_agent.domain.ports.data_source import ReadOnlyDataSource
 from erp_agent.domain.ports.hr_directory import HrDirectory
@@ -62,16 +62,21 @@ def _may_read_contact_pii(context: SecurityContext) -> bool:
     """Whether contact PII may be selected at all for this principal.
 
     Deliberately decided *before* the query rather than redacted after, so the
-    values never enter the process. Two cases qualify: an HR role, which may
-    read it about anyone; and ``SELF`` scope, where the only row the predicate
-    can return is the principal's own.
+    values never enter the process. Two cases qualify: holding
+    ``hr.contact_pii:read``, which permits reading it about anyone; and ``SELF``
+    scope, where the only row the predicate can return is the principal's own.
 
     Conservative on purpose. A ``TEAM``-scoped manager reading their *own*
     record does not get their own date of birth, because at statement-build time
     we do not yet know which row will come back. Under-permission is the safe
     direction, and the column can be requested through a self-scoped path.
+
+    Asks the same permission :mod:`~erp_agent.domain.policies.field_policy` asks,
+    from the same context. The two must agree -- one decides which columns are
+    *selected* and the other which are *returned* -- and sharing the permission
+    rather than a role-name list is what keeps them from drifting.
     """
-    return context.is_self_scoped or context.has_any_role(*HR_ROLES)
+    return context.is_self_scoped or context.may(READ_CONTACT_PII)
 
 
 def _optional(value: object) -> str | None:

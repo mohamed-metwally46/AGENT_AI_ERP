@@ -48,15 +48,20 @@ class TestCoverage:
         # that cannot diff is a gate that gets ignored.
         assert [case.id for case in load_golden_set().cases] == [case.id for case in GOLDEN.cases]
 
-    def test_every_case_names_a_principal_the_dev_fixture_has(self):
+    def test_every_case_names_a_scope_some_mock_user_resolves_to(self):
+        # Golden cases name a scope, not a user. The scope has to be one some
+        # rostered user actually resolves to -- a case run as a scope nobody
+        # holds measures a permission nobody can obtain.
         import yaml
 
-        from erp_agent.infrastructure.security.fixture_principal_resolver import (
-            default_fixture_path,
+        from erp_agent.infrastructure.security import (
+            default_identity_fixture_path,
+            packaged_role_catalogue,
         )
 
-        principals = yaml.safe_load(default_fixture_path().read_text(encoding="utf-8"))
-        scopes = {row["scope"] for row in principals["principals"]}
+        catalogue = packaged_role_catalogue()
+        roster = yaml.safe_load(default_identity_fixture_path().read_text(encoding="utf-8"))
+        scopes = {catalogue.resolve(row["roles"]).scope.value for row in roster["users"]}
 
         assert {case.principal for case in GOLDEN.cases} <= scopes
 

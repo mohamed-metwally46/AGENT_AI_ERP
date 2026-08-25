@@ -139,23 +139,37 @@ Two caveats that are real:
 
 ## The part that is not ready, and why
 
-**Principal resolution is fixture-backed** (Plan.md gap S6). `users` and
-`user_roles` are Platform tables that `mock_hr` does not have, and this plan
-does not create them. Until they exist on the target:
+**Principal resolution is mock-backed** (Plan.md gap S6). `users`, `user_roles`,
+`roles` and `role_permissions` are Platform tables that `mock_hr` does not have,
+and this plan does not create them. What stands in their place is a
+development-only roster of seven users with real roles and resolved permissions
+— see `docs/mock-identity.md`, which documents the roster, the resolution rule,
+and the exact shape of the adapter that replaces it.
 
-- `FixturePrincipalResolver` must be pointed at a fixture whose `employee_id`
+Until those tables exist on the target:
+
+- `MockIdentityResolver` must be pointed at a roster whose `employee_number`
   values are real on the target (`ERP_PRINCIPAL_FIXTURE_PATH`);
-- `FixtureAccessTokens` must likewise, and the composition root **refuses the
-  packaged dev credentials when `APP_ENV=production`** — deliberately, because
-  they are static, non-expiring and committed to this repository.
+- `FixtureAccessTokens` must likewise (`ERP_ACCESS_TOKEN_FIXTURE_PATH`);
+- and **both are refused when `APP_ENV=production`** — by the composition root
+  and again, independently, by `run_startup_checks`. Deliberately: the roster is
+  committed to this repository and one of its entries grants organisation scope.
+
+What has improved since the last revision of this document: the roster names
+`employee_number` rather than `employee_id`, so it survives a re-seed, and an
+employee number the target does not have fails **start-up** rather than
+somebody's first question. Pointing the agent at a new target now surfaces a
+mismatched roster immediately.
 
 The real implementation is a join `users.id → users.employee_id → employees` for
-placement, and `user_roles → role_permissions → permissions` for the grant.
-Neither can be written against a schema nobody has agreed, which is gap **S2**:
-the `permissions.resource` vocabulary is not enumerated anywhere. Section 8.5 is
-explicit that these are resolved with the ERP owners and that the plan does not
-invent answers.
+placement, and `user_roles → role_permissions → permissions` for the grant. Both
+queries are written out in `docs/mock-identity.md`. What still cannot be written
+is the mapping from the ERP's `permissions.resource` strings onto the six
+resources this agent implements — that is gap **S2**, the vocabulary is not
+enumerated anywhere, and section 8.5 is explicit that these are resolved with the
+ERP owners rather than invented here.
 
-So the honest statement of readiness is: **the data path is ready to cut over
-and the identity path is not.** A cutover today would read the right rows for a
-principal the system cannot yet resolve from the target's own tables.
+So the honest statement of readiness is unchanged in shape but narrower in
+scope: **the data path is ready to cut over, and the identity path needs one
+agreement and one adapter.** The adapter is a single expression in the
+composition root; the agreement is not ours to make alone.

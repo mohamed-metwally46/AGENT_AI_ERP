@@ -120,7 +120,10 @@ class TestSpecificationValidation:
                 ]
             )
 
-    @pytest.mark.parametrize("reserved", ["employee_id", "scope", "dept_id", "limit", "sql"])
+    @pytest.mark.parametrize(
+        "reserved",
+        ["employee_id", "scope", "dept_id", "limit", "sql", "permissions", "permission_levels"],
+    )
     def test_a_tool_declaring_a_reserved_argument_is_refused(self, reserved):
         # The strongest form of the guard: such a tool never reaches the model
         # at all, so the model is never even offered the shape.

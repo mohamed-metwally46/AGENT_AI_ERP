@@ -17,6 +17,7 @@ from erp_agent.domain.models.security_context import DataScope, SecurityContext
 from erp_agent.domain.models.sql import SqlStatement
 from erp_agent.infrastructure.database.connection import PostgresReadOnlyDataSource
 from erp_agent.infrastructure.database.queries.hr_directory import PostgresHrDirectory
+from erp_agent.infrastructure.security.mock_identity import packaged_role_catalogue
 
 pytestmark = pytest.mark.integration
 
@@ -110,11 +111,13 @@ class TestOpenQuestion1TeamScopedSelfLookup:
         assert result.employee.date_of_birth == manager["date_of_birth"]
 
     async def test_an_hr_role_lifts_it_at_any_scope(self, directory, manager):
+        grant = packaged_role_catalogue().resolve(["hr_employee"])
         context = SecurityContext(
             user_id="1",
             employee_id=str(manager["employee_id"]),
             scope=DataScope.TEAM,
-            role_names=frozenset({"hr"}),
+            role_names=grant.role_names,
+            permissions=grant.permissions,
         )
 
         result = await GetEmployeeTool(directory).execute(

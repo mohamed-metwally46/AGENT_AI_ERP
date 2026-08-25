@@ -17,6 +17,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from erp_agent.domain.models.authorization import Permission, PermissionSet
+
 __all__ = ["DataScope", "SecurityContext", "validate_scope_requirements"]
 
 
@@ -104,8 +106,13 @@ class SecurityContext:
             "all branches" -- failing closed matters more here than convenience.
         manager_of: Employees reporting to this principal, transitively. Used by
             ``TEAM`` scope. Computed server-side from the reporting tree.
-        role_names: Role names held, for field-level decisions such as whether
-            an HR role may see contact PII.
+        role_names: Role names held. Carried for logging and diagnostics only.
+            Nothing authorizes on it -- see ``permissions``, which is the single
+            authority, and note that there is deliberately no ``has_any_role``.
+        permissions: What the held roles grant, resolved before this object was
+            built. Empty by default, and an empty set permits nothing: a context
+            nobody granted anything to must refuse everything rather than allow
+            everything.
     """
 
     user_id: str
@@ -116,6 +123,7 @@ class SecurityContext:
     allowed_branch_ids: frozenset[str] = field(default_factory=frozenset)
     manager_of: frozenset[str] = field(default_factory=frozenset)
     role_names: frozenset[str] = field(default_factory=frozenset)
+    permissions: PermissionSet = field(default_factory=PermissionSet)
 
     def __post_init__(self) -> None:
         """Validate the context can actually express its own scope.
@@ -148,30 +156,38 @@ class SecurityContext:
         """Whether the principal may read only their own record."""
         return self.scope is DataScope.SELF
 
-    def has_any_role(self, *names: str) -> bool:
-        """Whether the principal holds any of the named roles.
+    def may(self, permission: Permission) -> bool:
+        """Whether this principal holds a permission.
+
+        The single authorization question anything below this layer asks. There
+        is deliberately no role-name equivalent: a call site that could ask
+        "is this an HR role?" would be a second source of authority, and the two
+        would eventually disagree.
 
         Args:
-            names: Role names to test, compared case-insensitively.
+            permission: What is being reached for.
 
         Returns:
-            ``True`` if any is held.
+            ``True`` if the resolved roles granted it at ``read`` or above.
         """
-        held = {name.lower() for name in self.role_names}
-        return any(name.lower() in held for name in names)
+        return self.permissions.allows(permission)
 
     def as_log_payload(self) -> dict[str, str | int]:
         """A safe rendering for logs (Plan.md section 20).
 
-        Identifiers and the scope decision, never the reachable-id sets: logging
-        a manager's whole reporting tree on every request is how an access log
-        becomes an org chart.
+        Identifiers, the scope decision and the grant, never the reachable-id
+        sets: logging a manager's whole reporting tree on every request is how
+        an access log becomes an org chart. The permissions are safe to name --
+        they are the policy, not the data it protects -- and having them in the
+        log is what makes an authorization decision reconstructable after the
+        fact.
         """
         return {
             "user_id": self.user_id,
             "employee_id": self.employee_id,
             "scope": self.scope.value,
             "roles": ",".join(sorted(self.role_names)),
+            "permissions": self.permissions.as_log_value(),
             "team_size": len(self.manager_of),
             "branches": len(self.allowed_branch_ids),
         }

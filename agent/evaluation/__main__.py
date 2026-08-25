@@ -50,11 +50,18 @@ options:
 
 
 async def _resolve_principals(container: Container) -> dict[str, SecurityContext]:
-    """Resolve every dev credential to the context it grants.
+    """Resolve every dev credential to the context it grants, keyed by scope.
 
     Through the real authentication chain rather than by constructing contexts,
     so a golden case runs as a scope some credential actually confers. Building
     one by hand here would let the suite measure a scope nobody can obtain.
+
+    Several mock users can share a rung of the ladder -- two are
+    department-scoped, and they sit in different departments. The **first** in
+    file order wins, deliberately: last-one-wins would mean the department a
+    golden case is evaluated against depended on the order of a YAML file, so
+    adding a user could silently change what the suite measured. First-wins is
+    equally arbitrary but stable, and the file's order is reviewable.
     """
     import yaml
 
@@ -67,7 +74,7 @@ async def _resolve_principals(container: Container) -> dict[str, SecurityContext
     contexts: dict[str, SecurityContext] = {}
     for row in tokens["tokens"]:
         caller = await container.authenticate(row["token"])
-        contexts[caller.context.scope.value] = caller.context
+        contexts.setdefault(caller.context.scope.value, caller.context)
     return contexts
 
 

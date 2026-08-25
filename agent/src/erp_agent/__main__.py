@@ -70,12 +70,12 @@ def _report(settings: Settings, checks: Sequence[str], stream: TextIO) -> None:
 
 def _principal_source(settings: Settings) -> str:
     """Describe where principals resolve from, without importing infrastructure early."""
-    from erp_agent.infrastructure.security import default_fixture_path
+    from erp_agent.infrastructure.security import default_identity_fixture_path
 
     configured = settings.security.principal_fixture_path
     if configured is not None:
         return f"{configured} (configured)"
-    return f"{default_fixture_path()} (packaged dev fixture)"
+    return f"{default_identity_fixture_path()} (packaged MOCK roster -- development only)"
 
 
 def _report_probe(probe: DataSourceProbe, employee_count: str, stream: TextIO) -> None:
